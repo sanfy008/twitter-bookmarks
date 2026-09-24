@@ -1,0 +1,21 @@
+[project]
+name = "x-local-archive"
+version = "0.1.0"
+description = "Local-first archive for X bookmarks and likes"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+x-archive = "x_local_archive.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8.3"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[build-system]
+requires = ["uv_build>=0.12.11,<0.13.0"]
+build-backend = "uv_build"
