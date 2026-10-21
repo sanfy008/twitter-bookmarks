@@ -246,6 +246,71 @@ const noDate = api.extractTweetCandidate({
 assert.equal(noDate.created_at, null);
 assert.equal(noDate.url, null);
 
+// --- starting a run must keep the page captured before the click -----------
+api.reset();
+api.extractTweetsFromData(bookmarkResponse);
+assert.equal(api.collector.size, 4);
+api.startSync();
+assert.equal(
+    api.collector.size,
+    4,
+    "startSync must not discard the first page captured before the user pressed start",
+);
+api.stopCapture();
+
+// --- bookmark and like membership are independent -------------------------
+const likesOnlyResponse = {
+    data: {
+        user: {
+            result: {
+                __typename: "User",
+                timeline: {
+                    timeline: {
+                        instructions: [
+                            {
+                                entries: [
+                                    {
+                                        content: {
+                                            itemContent: {
+                                                tweet_results: {
+                                                    result: tweet(
+                                                        "1900000000000000009",
+                                                        "erin",
+                                                        "Erin",
+                                                        "liked only",
+                                                        "Thu Apr 25 00:00:00 +0000 2024",
+                                                    ),
+                                                },
+                                            },
+                                        },
+                                    },
+                                ],
+                            },
+                        ],
+                    },
+                },
+            },
+        },
+    },
+};
+
+api.reset();
+sandbox.location.pathname = "/i/history";
+api.extractTweetsFromData(bookmarkResponse);
+assert.equal(api.currentTweets().length, 4);
+
+sandbox.location.pathname = "/i/history/likes";
+assert.equal(api.currentTweets().length, 0);
+api.extractTweetsFromData(likesOnlyResponse);
+assert.equal(api.currentTweets().length, 1);
+assert.equal(api.collector.size, 5);
+
+// The same posts can be in both lists; membership is added, not replaced.
+api.extractTweetsFromData(bookmarkResponse);
+assert.equal(api.currentTweets().length, 5);
+sandbox.location.pathname = "/i/history";
+assert.equal(api.currentTweets().length, 4);
+
 // --- endpoint scoping -----------------------------------------------------
 assert.equal(
     api.endpointMatchesPage("https://x.com/i/api/graphql/abc/Bookmarks?variables=1", "bookmark"),

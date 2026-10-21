@@ -29,6 +29,8 @@ file. It is deliberately scoped:
   (Videos, Articles) are ignored.
 - It only accepts the `Bookmarks`, `BookmarkFolderTimeline`, `Likes`, and `UserLikes` endpoints.
 - It never auto-starts; you press **开始抓取** and can stop at any time.
+- It keeps the first page X loaded before you pressed start; starting a run does not clear it.
+- While X fetches the next page, the log reports `等待下一页` instead of a silent 0.
 - It pauses while the tab is in the background, so it does not collect unattended.
 - It stops on `HTTP 401`/`429`, on the configured scroll limit, or at the bottom of the timeline.
 - It only reads the response bodies X itself requested; it does not issue its own API calls.
@@ -152,11 +154,15 @@ uv run x-archive stats
 uv run x-archive prune --dry-run
 uv run x-archive prune
 uv run x-archive forget --account old_account
+uv run x-archive inspect D:\Downloads\bookmarks_ethan151300_20261021-155610.json
 ```
 
 - `stats` reports counts, date range, accounts, schema version, and the last import.
 - `prune` removes empty/unknown rows and tweets with no archive membership, then vacuums.
 - `forget` removes one account, its archive entries, and any tweets left orphaned.
+- `inspect` checks an export before importing it: declared vs actual counts, duplicate
+  ids, empty text, unknown authors, media, date range, and whether `newest_id` /
+  `oldest_id` match the file.
 
 ## Backup and verification
 
@@ -209,9 +215,25 @@ uv run x-archive verify
 uv run x-archive stats
 uv run x-archive prune --dry-run
 uv run x-archive forget --account old_account
+uv run x-archive inspect D:\Downloads\bookmarks_ethan151300_20261021-155610.json
 uv run x-archive --database D:\Private\archive.sqlite3 verify
 uv run x-archive --version
 ```
+
+## Collector troubleshooting
+
+- **Progress stays flat for several screens.** X has already rendered the current
+  batch and is waiting to be scrolled to the bottom before it requests the next one.
+  The log shows `等待下一页`. The run only declares the bottom after ~40 seconds
+  without page growth, because bookmark pagination can take 20–30 seconds.
+- **The exported JSON is missing the newest page.** Userscript v2.1.0 and earlier
+  cleared the collector when 开始抓取 was pressed, discarding the page X had already
+  loaded. Update to v2.2.0; the export now includes it and `newest_id` is correct.
+- **The account shows `owner`.** The profile link was not found. Pass `-Account`
+  to `sync.ps1`, or use the legacy `/<handle>/likes` page for likes.
+- **No data at all.** Open 日志 and check the `接受端点` / `忽略端点` lines. The
+  bookmarks endpoint is `Bookmarks` and the likes endpoint is `Likes`; if X changes
+  them, the log will show the new name.
 
 ## Data quality note
 

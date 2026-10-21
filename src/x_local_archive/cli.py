@@ -20,6 +20,7 @@ from .db import (
     stats,
     verify_database,
 )
+from .inspect import inspect_export
 
 
 def _configure_stdio() -> None:
@@ -75,6 +76,9 @@ def build_parser() -> argparse.ArgumentParser:
     forget = commands.add_parser("forget")
     forget.add_argument("--account", required=True)
     forget.add_argument("--no-vacuum", action="store_true")
+
+    inspector = commands.add_parser("inspect")
+    inspector.add_argument("source", type=Path)
     return parser
 
 
@@ -130,6 +134,8 @@ def main(argv: list[str] | None = None) -> int:
                     indent=2,
                 )
             )
+        elif args.command == "inspect":
+            print(json.dumps(inspect_export(args.source), ensure_ascii=False, indent=2))
     except (FileNotFoundError, OSError, ValueError, sqlite3.Error, json.JSONDecodeError) as error:
         print(f"error: {error}")
         return 2

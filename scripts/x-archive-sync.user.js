@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         X/Twitter Bookmarks & Likes Incremental Syncer
 // @namespace    https://github.com/x-local-archive/x-local-archive
-// @version      2.1.0
+// @version      2.2.0
 // @description  手动触发、低频率地抓取 X 书签/点赞时间线并导出为 JSON，供本地 x-archive 导入。支持 History 新路由与旧书签/点赞路由。
 // @author       x-local-archive
 // @match        https://x.com/i/history*
@@ -19,9 +19,9 @@
 (function () {
     'use strict';
 
-    const VERSION = '2.1.0';
+    const VERSION = '2.2.0';
     const SCROLL_INTERVAL_MS = 2000;
-    const STALL_LIMIT = 12;
+    const STALL_LIMIT = 20; // 40s: X bookmark pagination can take 20-30s per page.
     const MAX_LOGS = 200;
 
     // 只接受与当前页面类型匹配的 GraphQL 端点，避免把主时间线、推文详情、
@@ -176,7 +176,8 @@
         };
     }
 
-    function extractTweetsFromData(root) {
+    function extractTweetsFromData(root, pageType = getPageType()) {
+        const type = pageType || 'unknown';
         let added = 0;
         const stack = [root];
         while (stack.length) {
@@ -184,9 +185,16 @@
             if (!node || typeof node !== 'object') continue;
 
             const candidate = extractTweetCandidate(node);
-            if (candidate && !tweetCollector.has(candidate.id)) {
-                tweetCollector.set(candidate.id, candidate);
-                added++;
+            if (candidate) {
+                const existing = tweetCollector.get(candidate.id);
+                if (!existing) {
+                    tweetCollector.set(candidate.id, { ...candidate, _types: new Set([type]) });
+                    added++;
+                } else if (!existing._types.has(type)) {
+                    // The same post can be both bookmarked and liked.
+                    existing._types.add(type);
+                    added++;
+                }
             }
 
             for (const key of Object.keys(node)) {
@@ -218,10 +226,10 @@
             return;
         }
 
-        const added = extractTweetsFromData(data);
+        const added = extractTweetsFromData(data, pageType);
         if (added > 0) {
             stallCount = 0;
-            logger.add('SUCCESS', `[${source}] +${added} 条，累计 ${tweetCollector.size} 条`);
+            logger.add('SUCCESS', `[${source}:${endpointName(url)}] +${added} 条，累计 ${collectedCount(pageType)} 条`);
             updateUIStatus();
         }
     }
@@ -281,11 +289,20 @@
         localStorage.setItem(breakpointKey(type, account), String(id));
     }
 
+    function currentTweets(type = getPageType()) {
+        if (!type) return [];
+        return Array.from(tweetCollector.values()).filter(tweet => tweet._types.has(type));
+    }
+
+    function collectedCount(type = getPageType()) {
+        return currentTweets(type).length;
+    }
+
     function reachedBreakpoint(lastSeenId) {
         const limit = toBigInt(lastSeenId);
         if (limit === null) return false;
-        for (const id of tweetCollector.keys()) {
-            const value = toBigInt(id);
+        for (const tweet of currentTweets()) {
+            const value = toBigInt(tweet.id);
             if (value !== null && value <= limit) return true;
         }
         return false;
@@ -392,7 +409,7 @@
 
         if (typeEl) typeEl.textContent = type === 'like' ? 'Likes' : type === 'bookmark' ? 'Bookmarks' : '--';
         if (accountEl) accountEl.textContent = account;
-        if (countEl) countEl.textContent = tweetCollector.size;
+        if (countEl) countEl.textContent = collectedCount();
         const lastSeen = type ? getBreakpoint(type, account) : '';
         if (lastEl) {
             lastEl.textContent = lastSeen ? lastSeen.slice(-8) + '…' : '未设定';
@@ -423,7 +440,12 @@
     }
 
     function scrollDown() {
-        const distance = 750 + Math.floor(Math.random() * 250);
+        const viewport = window.innerHeight || 900;
+        const remaining = document.documentElement.scrollHeight - (window.scrollY + viewport);
+        // Traverse a large loaded batch quickly, then approach the bottom gently so
+        // X's IntersectionObserver still fires the next-page request.
+        const step = remaining > viewport * 2 ? viewport * 1.4 : viewport * 0.8;
+        const distance = Math.round(step) + Math.floor(Math.random() * 120);
         window.scrollBy({ top: distance, behavior: 'smooth' });
     }
 
@@ -436,7 +458,6 @@
             return;
         }
         const account = getCurrentAccount();
-        scrollCount++;
 
         if (config.mode === 'incremental') {
             const lastSeenId = getBreakpoint(type, account);
@@ -454,6 +475,9 @@
         const atBottom = window.innerHeight + window.scrollY >= height - 200;
         if (atBottom) {
             stallCount++;
+            if (stallCount === 2) {
+                logger.add('WARN', '当前已加载内容已滚到底，等待 X 返回下一页…');
+            }
             if (stallCount === 4 || stallCount === 8) {
                 logger.add('WARN', '等待下一页响应，执行回弹重试');
                 window.scrollBy(0, -350);
@@ -462,29 +486,30 @@
                     window.dispatchEvent(new Event('scroll'));
                 }, 400);
             } else if (stallCount >= STALL_LIMIT) {
-                stopSync(`已到达时间线底部，共 ${tweetCollector.size} 条`);
+                stopSync(`已到达时间线底部，共 ${collectedCount()} 条`);
                 return;
             }
-        } else {
-            stallCount = 0;
-        }
-
-        scrollDown();
-        logger.add('INFO', `第 ${scrollCount}${config.maxScrolls > 0 ? '/' + config.maxScrolls : ''} 屏，已捕获 ${tweetCollector.size} 条`);
-    }
-
-    function toggleSync() {
-        if (isScrolling) {
-            stopSync('用户手动停止');
+            // Do not keep scrolling while the next page is in flight.
+            logger.add('INFO', `已滚动 ${scrollCount}${config.maxScrolls > 0 ? '/' + config.maxScrolls : ''} 屏（等待下一页，已捕获 ${collectedCount()} 条）`);
             return;
         }
+        stallCount = 0;
+
+        scrollDown();
+        scrollCount++;
+        logger.add('INFO', `第 ${scrollCount}${config.maxScrolls > 0 ? '/' + config.maxScrolls : ''} 屏，已捕获 ${collectedCount()} 条`);
+    }
+
+    function startSync() {
         const type = getPageType();
         if (!type) {
             showMessage('当前页面不是书签或点赞页。', '#f4212e');
             return;
         }
 
-        tweetCollector.clear();
+        // Do NOT clear tweetCollector. X loads the first page as soon as the page
+        // opens, before the user presses start; clearing it discarded that page
+        // and the run appeared stuck at 0 until the second page arrived.
         isScrolling = true;
         scrollCount = 0;
         stallCount = 0;
@@ -498,7 +523,8 @@
         const account = getCurrentAccount();
         activeContext = { type, account };
         const lastSeenId = getBreakpoint(type, account);
-        logger.add('INFO', `开始抓取 ${type}/${account}（${config.mode === 'incremental' ? '增量' : '全量'}，上限 ${config.maxScrolls === 0 ? '不限' : config.maxScrolls + ' 屏'}）`);
+        const carried = collectedCount(type);
+        logger.add('INFO', `开始抓取 ${type}/${account}（${config.mode === 'incremental' ? '增量' : '全量'}，上限 ${config.maxScrolls === 0 ? '不限' : config.maxScrolls + ' 屏'}）${carried ? `；页面预捕获 ${carried} 条，将一并导出` : ''}`);
         if (config.mode === 'incremental' && lastSeenId) {
             logger.add('INFO', `断点守护已启用: ${lastSeenId}`);
         }
@@ -507,19 +533,35 @@
         scrollTimer = window.setInterval(tick, SCROLL_INTERVAL_MS);
     }
 
-    function stopSync(reason = '') {
+    function toggleSync() {
+        if (isScrolling) {
+            stopSync('用户手动停止');
+            return;
+        }
+        startSync();
+    }
+
+    function stopCapture() {
         isScrolling = false;
         if (scrollTimer) {
             window.clearInterval(scrollTimer);
             scrollTimer = null;
         }
+    }
+
+    function stopSync(reason = '') {
+        stopCapture();
         const button = document.getElementById('x-archive-btn-sync');
         if (button) {
             button.textContent = '开始抓取';
             button.style.background = '#1d9bf0';
         }
-        if (reason) showMessage(reason, '#ffd400');
-        if (tweetCollector.size > 0) exportData();
+        if (reason) {
+            logger.add('INFO', `停止: ${reason}`);
+            showMessage(reason, '#ffd400');
+        }
+        const type = getPageType() || activeContext?.type;
+        if (type && currentTweets(type).length > 0) exportData();
     }
 
     function exportData() {
@@ -530,7 +572,7 @@
             return;
         }
         const account = currentType ? getCurrentAccount() : activeContext?.account || 'owner';
-        const tweets = Array.from(tweetCollector.values());
+        const tweets = currentTweets(type).map(({ _types, ...tweet }) => tweet);
         if (tweets.length === 0) {
             logger.add('WARN', '没有可导出的数据');
             showMessage('尚未捕获到推文。', '#f4212e');
@@ -567,7 +609,7 @@
         document.body.removeChild(anchor);
         URL.revokeObjectURL(url);
 
-        logger.add('SUCCESS', `已导出 ${tweets.length} 条到 ${filename}`);
+        logger.add('SUCCESS', `已导出 ${tweets.length} 条（newest=${newest.id}，oldest=${oldest.id}）到 ${filename}`);
         showMessage(`已导出 ${tweets.length} 条到 ${filename}`, '#00ba7c');
     }
 
@@ -583,6 +625,9 @@
             getPageType,
             getCurrentAccount,
             endpointMatchesPage,
+            currentTweets,
+            startSync,
+            stopCapture,
         };
     }
 

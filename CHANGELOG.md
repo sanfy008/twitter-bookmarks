@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.2.2 - 2026-10-21
+
+### Fixed
+
+- Starting a capture no longer clears the tweets already captured from the first
+  page. Previously the first page (often 20–30 posts) was discarded, the counter
+  stayed at 0 for the first ~10 screens, and the exported JSON missed the newest
+  page, so the saved `newest_id` breakpoint was wrong.
+- The bottom-of-timeline timeout is now 40s instead of 24s. X bookmark pagination
+  can take 20–30s, so the old timeout could stop a run between pages.
+- While waiting for the next page the collector no longer keeps scrolling, and the
+  log says `等待下一页` rather than showing an unexplained flat count.
+- Bookmark and like membership is tracked per page type, so switching between the
+  History tabs cannot mix the two lists; the same post can belong to both.
+
+### Changed
+
+- Logs include the GraphQL endpoint name and the exported `newest`/`oldest` IDs.
+- Adaptive scroll step: traverse a loaded batch quickly, slow down near the bottom.
+- The scroll limit now counts actual scroll steps; waiting for the next page no longer
+  consumes the configured limit.
+
 ## 0.2.1 - 2026-10-21
 
 ### Fixed

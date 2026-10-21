@@ -51,7 +51,7 @@ Decision: **rejected for current scope**. Although Docker was not demonstrated a
 
 ## Bundled collector in this repository
 
-`scripts/x-archive-sync.user.js` (v2.1.0) is maintained by this project. It is not a
+`scripts/x-archive-sync.user.js` (v2.2.0) is maintained by this project. It is not a
 third-party exporter, but it is subject to the same constraints:
 
 - Opt-in and manually started from the floating widget; it never runs on page load.

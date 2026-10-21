@@ -1,6 +1,7 @@
 import sqlite3
 
 from x_local_archive.db import import_json, prune, search, stats, verify_database
+from x_local_archive.inspect import inspect_export
 
 
 def userscript_payload():
@@ -9,7 +10,7 @@ def userscript_payload():
         "account": "ethan151300",
         "type": "bookmark",
         "exported_at": "2026-10-21T06:00:00.000Z",
-        "newest_id": "1782103537234973176",
+        "newest_id": "1800000000000000002",
         "oldest_id": "1600000000000000003",
         "total_tweets": 4,
         "tweets": [
@@ -94,7 +95,7 @@ def test_userscript_payload_end_to_end(write_json, database):
     assert run[0] == "ethan151300"
     assert run[1] == "bookmark"
     assert run[2] == "2026-10-21T06:00:00+00:00"
-    assert run[3] == "1782103537234973176"
+    assert run[3] == "1800000000000000002"
     assert run[4] == 4
     assert len(run[5]) == 64
     assert run[6] == "bookmarks_ethan151300.json"
@@ -157,6 +158,36 @@ def test_raw_graphql_tweet_end_to_end(write_json, database):
     assert hit["author_username"] == "alice"
     assert hit["url"] == "https://x.com/alice/status/1782103537234973176"
     assert hit["created_at"] == "2024-04-21T17:46:07+00:00"
+
+
+def test_inspect_export_reports_metadata_and_warnings(write_json):
+    source = write_json("bookmarks.json", userscript_payload())
+    report = inspect_export(source)
+    assert report["declared"]["total_tweets"] == 4
+    assert report["actual"]["records"] == 4
+    assert report["actual"]["unique_ids"] == 4
+    assert report["actual"]["newest_id"] == "1800000000000000002"
+    assert report["actual"]["oldest_id"] == "1600000000000000003"
+    assert report["warnings"] == []
+
+    broken = write_json(
+        "broken.json",
+        {
+            "total_tweets": 99,
+            "newest_id": "1",
+            "tweets": [
+                {"id": "5", "text": "ok", "username": "alice"},
+                {"id": "5", "text": "duplicate", "username": "alice"},
+                {"id": "6", "text": "", "author_username": "unknown"},
+            ],
+        },
+    )
+    report = inspect_export(broken)
+    assert report["actual"]["duplicate_ids"] == 1
+    assert report["actual"]["empty_text"] == 1
+    assert report["actual"]["unknown_author"] == 1
+    assert any("total_tweets" in warning for warning in report["warnings"])
+    assert any("duplicate" in warning for warning in report["warnings"])
 
 
 def test_legacy_polluted_payload_can_be_pruned(write_json, database):
