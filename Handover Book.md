@@ -1,6 +1,6 @@
 # Handover Book — X Local Archive
 
-> **ReadMe 例外声明**：本次与上次 project-save 均按用户明确要求，**不生成、不覆盖** 现有 `README.md`（该文件是项目产品文档，保留原样）。因此 project-save 的活性摘要由本文件的 Zone A 与 `docs/daily__pipeline_reviews/2026-10-21.md` 承担；`docs/project-state/RESUME.md` 提供下一会话的一分钟入口。`validate_closure.py` 的 ReadMe 契约检查在临时镜像中执行，真实工作区不改写 README。
+> **ReadMe 例外声明**：历次 project-save 均按用户明确要求，**不生成、不覆盖** 现有 `README.md`（该文件是项目产品文档，保留原样）。因此 project-save 的活性摘要由本文件的 Zone A 与 `docs/daily__pipeline_reviews/2026-10-21.md` 承担；`docs/project-state/RESUME.md` 提供下一会话的一分钟入口。`validate_closure.py` 的 ReadMe 契约检查在临时镜像中执行，真实工作区不改写 README。
 
 ## Zone A — Living Dashboard
 
@@ -28,6 +28,7 @@
 - 用户需把 Violentmonkey 更新到 **v2.3.1**，重新导出 `/i/history` 与 `/i/history/likes`；当前 用户 Downloads 中的 `bookmarks_ethan151300_20261021-162308.json` 是 v2.2，含 104 条非数字 ID 且无元数据。
 - `data/archive.sqlite3` 中 2,508 条历史推文的作者/媒体类型/URL 仍为 `unknown`，需重新导出才能补齐；新元数据表已就绪，等待导入。
 - 媒体下载、标签/笔记/已读 UI、真实浏览器 E2E 尚未实现。
+- 修复分支 `fix/import-safety-and-provenance`（提交 `55cf481`）已推送，PR 尚未创建 —— 本机无 `gh`，用户需通过 compare 链接手动创建。
 
 **🧱 Active Blockers**
 
@@ -37,25 +38,26 @@
 
 **🗂️ Latest Daily Review**
 
-- `docs/daily__pipeline_reviews/2026-10-21.md`（2026-10-21，第二轮更新）。
+- `docs/daily__pipeline_reviews/2026-10-21.md`（2026-10-21，第三轮更新）。
 
 **🚀 Next Prompt Recommendations**
 
+0. “用 https://github.com/sanfy008/twitter-bookmarks/compare/master...fix/import-safety-and-provenance?expand=1 创建 PR，正文用 `docs/project-state/PR-body.md`；合并后确认 GitHub Actions 首次运行结果（这是目前唯一没有证据的门禁）。”
 1. “把 userscript 更新到 2.3.1，重新导出 `/i/history` 与 `/i/history/likes`，先运行 `uv run x-archive inspect <file>`，确认 `non_numeric_ids=0`、`empty_text=0`、`unknown_author=0`、`declared.newest_id/oldest_id == actual`，再运行 `scripts/sync.ps1`。”
 2. “如果 `inspect` 仍报 `unknown_author` 或 `non_numeric_ids`，贴出输出与日志中的 `接受端点`/`忽略端点` 行；不要直接导入 v2.2 的 1,202 条文件。”
 3. “若确认 v2.2 文件是完整书签列表（1,174 条差异是取消书签），再决定是否导入；否则先补一次完整 v2.3.1 全量导出。”
 
 ### A3. 🔍 Quality & Gap Analysis
 
-- 优势：零运行时依赖；46 pytest + Node 行为测试；Schema v8 元数据模型；CJK 检索 + 过滤；备份/校验/doctor/undo 闭环；隐私边界清晰。
-- 缺口：真实浏览器 E2E 缺失；2,508 条历史作者缺失；v2.2 文件含 104 条伪记录且无元数据；CI 运行证据未观察；无 `mypy`/覆盖率；媒体未下载；标签/笔记/已读 UI 未实现；只有本机备份。
+- 优势：零运行时依赖；55 pytest + Node 行为测试；Schema v9 元数据模型与来源表；CJK 检索 + 过滤；备份/校验/doctor/undo 闭环；导入具备“不降级”语义；隐私边界清晰。
+- 缺口：真实浏览器 E2E 缺失；2,508 条历史作者缺失；v2.2 文件含 104 条伪记录且无元数据；CI 修正后尚未观察到真实运行；无 `mypy`/覆盖率；媒体未下载；标签/笔记/已读 UI 未实现；只有本机备份。
 - 技术债务见 B4。
 
 ### A4. 📊 Skill Dashboard
 
 | Skill 名称 | 累计触发 | 用户满意 | 用户纠正 | 效用评分 |
 |---|---|---|---|---|
-| project-save | 2 | 1 | 0 | ⭐⭐⭐⭐（第二次待确认） |
+| project-save | 3 | 2 | 0 | ⭐⭐⭐⭐（第三次待确认） |
 | gov-doc-refine | 0 | 0 | 0 | — |
 | mpa-thesis-review | 0 | 0 | 0 | — |
 | mpa-thesis-writing | 0 | 0 | 0 | — |
@@ -178,6 +180,36 @@
   - ❌ Alternatives：直接照搬 xarchive 的浏览器扩展/本地服务；引入 Next.js/Meilisearch（偏离零依赖）。
   - 📌 Status: `Active`
 
+- **[DEC-016] 导入采用“不降级”语义：非空值优先** | Session: S-20261021-1730 | 2026-10-21
+  - 🔍 Context：`_update_tweet` 无条件 `SET` 全部列；实测 thin 记录（无作者/时间/正文）把已入库的好数据清空，FTS 也写入空文本，中文检索从此失效，且本地无法恢复。
+  - ✅ Decision：`author_name/author_id/created_at/url/lang/source` 与四个关系列在新值为空时保留旧值；`text` 为空保留旧文本；`author_username` 为 `unknown`/空时保留旧作者；`fts_text/fts_author` 用**实际生效值**重建。media/entities 只在 payload 显式提供时替换（显式 `[]` 仍清空）。
+  - ❌ Alternatives：整行覆盖（已证明丢数据）；跳过 content_hash 未变的记录（挡不住真的变化）；把空值当删除意图（用户无法区分）。
+  - 📌 Status: `Active`
+
+- **[DEC-017] 来源信息单独建表 `entry_runs`** | Session: S-20261021-1730 | 2026-10-21
+  - 🔍 Context：`archive_entries.run_id` 只在插入行时写入；后一批次复用同一条目时 `ON CONFLICT DO NOTHING` 不更新它，导致 `undo --run` 把另一批次仍在使用的条目当孤儿删除。
+  - ✅ Decision：Schema v9 新增 `entry_runs(account_id,tweet_id,entry_type,run_id,first_seen_at,last_seen_at)`；每次导入都写一条声明；undo 只删除无其他 run 声明的条目；孤儿判定统一用 `NOT EXISTS`（`NOT IN` 遇 NULL 静默返回空集）。
+  - ❌ Alternatives：冲突时更新 `run_id`（等于丢掉上一批次的归属）；按时间窗口删除（会误删）；恢复整库备份（丢失后续导入）。
+  - 📌 Status: `Active`
+
+- **[DEC-018] 导出默认全量，不设隐式上限** | Session: S-20261021-1730 | 2026-10-21
+  - 🔍 Context：`export --limit` 默认 1000，而库内 2,508 条；导出是“把归档带走”的手段，静默截断比慢更危险。FTS 搜索本身限制 1..1000。
+  - ✅ Decision：`--limit` 默认 `None` 表示全部；有 query 时按 1000 一页循环取全；显式传 `--limit` 仍生效；`list_tweets` 仍保留自身 1..100000 的硬上限。
+  - ❌ Alternatives：把默认值改大（仍是隐式上限）；导出时打印警告但照旧截断（用户仍可能漏读）。
+  - 📌 Status: `Active`
+
+- **[DEC-019] 备份文件名绑定数据库身份** | Session: S-20261021-1730 | 2026-10-21
+  - 🔍 Context：文件名精度只到秒，`sync.ps1` 每次成功导入都备份，实测 4 次调用只剩 1 个文件；轮转还会删掉共享目录中其他数据库的备份。
+  - ✅ Decision：命名改为 `x-archive-<源库名>-YYYYMMDD-HHMMSS[-n].sqlite3`，冲突自动加序号；轮转只清理同一 `stem` 的备份；无 stem 的旧命名视为本库，保证历史备份仍被轮转。
+  - ❌ Alternatives：加毫秒（仍可能冲突且难读）；不轮转（磁盘无限增长）；按修改时间全局轮转（会删别人的）。
+  - 📌 Status: `Active`
+
+- **[DEC-020] 本地门禁全绿不等于安全，回归测试必须覆盖失败场景** | Session: S-20261021-1730 | 2026-10-21
+  - 🔍 Context：第二轮声称“46 tests 全绿”，但对立性审查用复现脚本找出 6 项缺陷，全部落在旧测试覆盖之外；其中 3 项会让“重新导出并导入”这条关键路径反而降低数据质量。
+  - ✅ Decision：修复每一项都先写复现脚本证明缺陷存在，修复后用同一脚本复验；新增测试针对“thin 记录、非数字 ID、共享条目 undo、重复导入、超 1000 条导出”等失败场景。
+  - ❌ Alternatives：只补成功路径测试（本次缺陷正是这样漏掉的）；只靠代码审读下结论（无法证明行为）。
+  - 📌 Status: `Active`
+
 ### B2. 🎨 Style DNA
 
 - `[S-20261021]` 用户使用中文，偏好直接结论 + 可核对证据，不要空泛总结。
@@ -216,6 +248,12 @@
   - 💥 错误表现：用户导出 1,202 条中 104 条 `id` 为 `https://t.co/...`，无文本/作者/时间；`oldest_id` 被算成 URL。
   - 💡 根因分析：`extractTweetCandidate` 只检查 `id` 与 `legacy/core/note_tweet`，未限制 ID 必须是数字；`exportData` 的 `BigInt` 转换把非数字 ID 变成 0。
   - ✅ 纠正措施：v2.3.1 只接受数字 ID；导出过滤非数字；导入拒绝 URL 型 ID；`inspect` 输出 `non_numeric_ids`；Node/Python 测试覆盖。
+
+- **[FAIL-005] “46 tests 全绿”掩盖了 6 项真实缺陷** | Session: S-20261021-1730 | 2026-10-21
+  - 🔧 触发条件：第二轮完成 0.3.1 后，以本地测试全绿作为“数据路径安全”的结论；用户随后要求做一轮对立性审查。
+  - 💥 错误表现：复现脚本证明降级重导会清空已入库字段、非数字 ID 可入库、`undo --run` 会删掉其他批次条目、CI 因分支名错误从未运行、同秒备份互相覆盖、导出默认截断到 1000 条。
+  - 💡 根因分析：测试只覆盖成功路径（导入有效数据后查询），没有覆盖“坏记录再次到达”“多批次共享条目”“同一秒连续备份”等失败与边界场景；验证被当成结论，而不是被当成待挑战的假设。
+  - ✅ 纠正措施：为每项缺陷先写复现脚本再修；新增 5 个失败场景测试（thin 重导、非数字 ID、User 形状、共享条目 undo、超 1000 条导出）；DEC-020 固化“先复现再修、测试覆盖失败场景”。
 
 ### B4. 🏗️ Technical Debt Register
 
@@ -289,7 +327,109 @@
   - ⚡ Impact: Medium
   - 💡 Suggested Fix: 记录 `mode`（full/quick）、`pages`、`completed`、`cursor`/`coverage_note`，让“是否跑到底”可判定。
 
+- **[DEBT-015] PR 创建依赖用户手动操作** | Introduced: S-20261021-1730 | Status: `Open`
+  - 📍 Location: 分支 `fix/import-safety-and-provenance`；`docs/project-state/PR-body.md`
+  - ⚡ Impact: Low/Medium
+  - 💡 Suggested Fix: 本机无 `gh`（GitHub CLI），无法用命令行建 PR；正文已写入 `docs/project-state/PR-body.md`，用 compare 链接手动创建即可。若希望以后自动化，需先安装并 `gh auth login`。
+
+- **[DEBT-016] `_connect_read` 回退到读写连接** | Introduced: S-20261021-1730 | Status: `Open`
+  - 📍 Location: `src/x_local_archive/db.py::_connect_read`
+  - ⚡ Impact: Low（只读命令在 WAL 边缘情况下会打开读写连接，可能创建 `-wal`/`-shm`）
+  - 💡 Suggested Fix: 已是既有行为，仅补了注释说明调用方不能假设文件未被触碰；若要彻底只读，可在 WAL 场景改用 `immutable=1` 或先做 checkpoint。
+
 ## Zone C — Session Archive
+
+### Session Snapshot: S-20261021-1730 | v1.2 | 2026-10-21 17:32
+
+**Session Summary**: 用户要求“阅读项目文件后做一轮对立性审查”。Agent 不采信上一轮“46 tests 全绿”的结论，用复现脚本逐条验证，定位 6 项缺陷并全部修复：降级重导覆盖好数据、导入侧非数字 ID 未校验、`undo --run` 误删其他批次条目、CI 因分支名错误从未运行、同秒备份互相覆盖、导出默认截断到 1000 条。Schema v8→v9（`entry_runs` 来源表），package 0.3.1→0.4.0，55 pytest 通过，真实库已迁移；提交 `55cf481` 推送至分支 `fix/import-safety-and-provenance`，PR 因本机无 `gh` 待用户手动创建。
+
+**Delta from Previous Save (增量变化)**:
+
+- 📁 New files：`docs/project-state/PR-body.md`。
+- ✏️ Modified files：`src/x_local_archive/{db.py,cli.py,export.py,__init__.py}`、`tests/{test_archive,test_doctor,test_export,test_normalize,test_search}.py`、`CHANGELOG.md`、`pyproject.toml`、`uv.lock`、`.github/workflows/ci.yml`。
+- 🗑️ Deleted files：无。
+- 🔑 Key changes：导入“不降级”语义、数字 ID + User 形状校验、`entry_runs` 来源表与 undo 语义、备份命名/轮转隔离、导出全量默认、重复导入短路、doctor 备份目录推导。
+
+**Decisions Made This Session**: DEC-016、DEC-017、DEC-018、DEC-019、DEC-020。
+
+**Failed Attempts This Session**: FAIL-005。
+
+**Pending FAIL Items**: 无。
+
+**Structured Retention（正向结构化保留）**:
+
+- **Decisions**: 见 DEC-016..DEC-020；核心是“导入不降级”“来源单独建表”“导出无隐式上限”“备份绑定数据库身份”“先复现再修”。
+- **Constraints**: 用户要求保留 `README.md`（本次 save 同样不生成/不覆盖）；不读 cookie/不调用 X 写接口；手动、低频、可停止；Python 3.12 + uv；Windows PowerShell 5.1；SQLite FTS5；GitHub 仓库 `sanfy008/twitter-bookmarks`；`data/`、`backups/`、`inbox/` 私有且 Git 忽略；默认分支为 `master`；本机无 `gh`。
+- **Verified Facts**: `pytest` 55 passed；`ruff check` 与 `ruff format --check` 通过（23 files）；`node scripts/check-userscript.mjs` passed；`x-archive verify` 三项 ok；`data/archive.sqlite3` 为 schema 9、2,508 tweets、2,171 bookmarks、804 likes、1,946 media、14,376,960 bytes；迁移前备份 `backups/x-archive-archive-20261021-171044.sqlite3`；`git ls-remote --symref origin HEAD` 证实远端只有 `master`；提交 `55cf481` 已推送到 `origin/fix/import-safety-and-provenance`。
+- **Files & Paths**: `src/x_local_archive/{db.py,cli.py,export.py,inspect.py}`；`scripts/x-archive-sync.user.js`；`scripts/check-userscript.mjs`；`tests/{test_archive,test_doctor,test_export,test_normalize,test_search}.py`；`docs/daily__pipeline_reviews/2026-10-21.md`；`docs/project-state/{RESUME.md,PR-body.md}`；`backups/x-archive-archive-20261021-171044.sqlite3`。
+- **Reusable Commands**: `uv run pytest`；`uv run ruff check .`；`uv run ruff format --check .`；`node scripts/check-userscript.mjs`；`uv run x-archive init`；`uv run x-archive verify`；`uv run x-archive doctor`；`uv run x-archive backup backups --keep 10`；`uv run x-archive export --format csv --out exports\`；`uv run x-archive undo --run <id>`；`git ls-remote --symref origin HEAD`。
+- **Interface Contracts**: CLI 不变（`init|import|search|export|backup|verify|stats|prune|forget|doctor|undo|inspect`）；`export --limit` 默认 `None`（全量）；`ImportStats` 新增 `duplicate_of`；`undo` 结果新增 `entries_kept_shared`；Schema v9 新增 `entry_runs(account_id,tweet_id,entry_type,run_id,first_seen_at,last_seen_at)`；备份命名 `x-archive-<源库名>-YYYYMMDD-HHMMSS[-n].sqlite3`。
+- **Rejected Approaches**: 整行覆盖（丢数据）；`undo` 用 `run_id` + `NOT IN`（误删）；导出默认 1000 条（静默截断）；按修改时间全局轮转备份（删别人的）；伪造迁移前的 `entry_runs` 来源。
+- **Test Results**: Windows + Python 3.12 + SQLite + PowerShell 5.1 + Node v22.13.0；55 pytest passed；ruff clean；Node 行为检查 passed；`verify` 三项 ok；真实库 v8→v9 迁移后条目数不变。真实浏览器 E2E 未执行（`未执行/待用户确认`）；CI 修正后首跑未观察（`未执行/待用户确认`）；PR 未创建（`未执行/待用户确认`）。
+- **Open Issues**: 需用 v2.3.1 重导；2,508 条历史作者仍缺失；v2.2 文件 1,174 条差异无法判定；媒体未下载；标签/笔记/已读 UI 未实现；CI 未观察；无异地备份；PR 待手动创建。
+- **Next Actions**: 1) 用 compare 链接创建 PR 并合并；2) 观察 CI 首跑；3) 更新 userscript 到 2.3.1 重导；4) `inspect` 确认后 `sync.ps1`；5) 评估媒体下载与覆盖度元数据。
+
+**Cognitive State at Close (会话关闭时的思维状态)**:
+
+- “本地测试全绿”只证明已写的用例通过，不证明关键路径安全。这 6 项缺陷全部落在旧测试覆盖之外，且 3 项会让“重新导出并导入”这条官方恢复路径反而降低数据质量。
+- 来源/血缘信息必须单独建表：塞进主表的 `run_id` 在冲突复用场景下必然失真。
+- 修复与验证要成对：每项缺陷都先有复现脚本，修复后用同一脚本复验，否则无法区分“看起来对了”和“真的对了”。
+
+**Context Window Highlights (上下文要点)**:
+
+- 用户先要求“阅读项目文件，掌握今天优化的历程，然后做一轮对立性审查”。
+- 审查结论给出 3 个 P0、4 个 P1 与文档层面的 3 处不实；用户逐项要求先修 P0-1/P0-2，再“继续完成你认为必要的优化”。
+- 用户要求“测试无误后提交 PR，然后执行 /project-save”，并强调不得生成/覆盖 README。
+- 本机无 `gh`，用户选择“给 compare 链接手动创建 PR”。
+
+**Session Reflect Report**:
+
+- **R1 — 成功模式**：坚持用复现脚本而不是代码审读下结论，使每条发现都有可重放的证据；修复后重跑同一脚本，直接证明缺陷消失（例如 `media rows 0 → 1`、`entries_removed 1 → 0`）。迁移真实库前先备份并在副本上试跑，避免了不可逆操作。
+- **R2 — 边界案例**：① `undo` 修复涉及语义变化（从“删该 run 创建的”到“删无其他声明的”），需改动 schema 才能正确表达，属于“小 bug 牵出模型缺陷”；② 旧测试用 `"s1"`、`"media-1"` 这类合成 ID，被新的数字校验正确拒绝，属于“测试夹具本身不合规”而非功能回归；③ 真实库旧 entry 无 `run_id`，`entry_runs` 迁移后为空 —— 选择如实为空，不伪造来源。
+- **R3 — 改进信号**：
+
+| 规则 | 本 Session 是否应触发 | 是否实际执行 |
+|---|---|---|
+| A1 先述计划 | Y | Y |
+| A4 先问后做 | Y | Y（迁移前备份；PR 方式先询问） |
+| B1 强制核查 | Y | Y |
+
+- 说明：改进方向是把“先复现再修”写进常规流程（已固化为 DEC-020），避免下次仍以测试全绿代替安全结论。
+
+**Compact File Tree Snapshot (精简文件树)**:
+
+```text
+12-Twitter_Bookmarks/
+├── README.md                         # 产品说明（历次 save 均保留，不改写）
+├── CANDIDATE_AUDIT.md                # 第三方导出器审计（v2.3.1）
+├── CHANGELOG.md                      # 0.4.0 变更
+├── LICENSE
+├── pyproject.toml                    # 0.4.0
+├── uv.lock
+├── .github/workflows/ci.yml          # master + main 触发
+├── Handover Book.md                  # 本文件
+├── Handover Book - Archive.md        # 归档占位（暂无归档快照）
+├── docs/
+│   ├── daily__pipeline_reviews/{_TEMPLATE.md,2026-10-21.md}
+│   └── project-state/{RESUME.md,PR-body.md}
+├── src/x_local_archive/
+│   ├── __init__.py                   # 0.4.0
+│   ├── cli.py                        # export --limit 默认全量
+│   ├── db.py                         # schema v9/entry_runs/导入不降级/undo
+│   ├── export.py                     # 全量导出
+│   ├── inspect.py                    # 导出 JSON 体检
+│   └── py.typed
+├── scripts/
+│   ├── x-archive-sync.user.js        # 采集器 v2.3.1
+│   ├── check-userscript.mjs          # Node 行为测试
+│   ├── install_userscript.py
+│   └── *.ps1
+├── tests/                            # 55 pytest
+├── data/.gitkeep                     # 私有 DB（Git 忽略）
+├── backups/.gitkeep                  # 私有备份（Git 忽略）
+└── inbox/{.gitkeep, failed/.gitkeep} # 私有导出（Git 忽略）
+```
+
 
 ### Session Snapshot: S-20261021-1640 | v1.1 | 2026-10-21 16:40
 

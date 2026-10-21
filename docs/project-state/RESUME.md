@@ -1,6 +1,6 @@
 ---
-updated: 2026-10-21T17:12:00+08:00
-session: S-20261021-1700
+updated: 2026-10-21T17:32:57+08:00
+session: S-20261021-1730
 project_version: v1.2
 status: active
 evidence_level: mixed
@@ -25,7 +25,8 @@ evidence_level: mixed
 - [verified] `verify` 三项 ok；`doctor` 仅剩 `2508 tweet(s) have an unknown author`。
 - [verified] 修复项均有复现脚本证据：降级重导保留字段、非数字 ID 拒绝、`undo` 保留共享条目、备份不再同秒覆盖、导出 2,508 条全量。
 - [verified] CI 原配置 `branches: ["main"]` 与仓库默认分支 `master` 不符，从未触发 — `git ls-remote --symref origin HEAD` 确认只有 `master`。
-- [inferred] 修正分支名后的 CI 首次运行仍未观察，需要推送后确认。
+- [verified] 修复已提交 `55cf481` 并推送到 `origin/fix/import-safety-and-provenance`；本机无 `gh`，PR 未创建。
+- [inferred] 修正分支名后的 CI 首次运行仍未观察，需要推送并合并后确认。
 
 ## Blockers and Do-Not-Repeat
 
@@ -40,8 +41,8 @@ evidence_level: mixed
 
 ## One Next Action
 
-- action: 在 Violentmonkey 中更新到 userscript 2.3.1，重新导出 `/i/history`（书签）与 `/i/history/likes`（点赞），先运行 `uv run x-archive inspect <file>`，确认无误后运行 `scripts/sync.ps1`。
-- completion check: `inspect` 显示 `non_numeric_ids=0`、`empty_text=0`、`unknown_author=0`、`declared.newest_id/oldest_id == actual`，且部分记录含 `author_id/entities/metrics`；`sync.ps1` 成功备份并 `verify` 三项 `ok`；`stats` 的 tweets/bookmarks/likes 按预期增加，`doctor` 的 `unknown_author` 下降。
+- action: 用 https://github.com/sanfy008/twitter-bookmarks/compare/master...fix/import-safety-and-provenance?expand=1 创建 PR（正文见 `docs/project-state/PR-body.md`），合并后查看 GitHub Actions 首次运行。
+- completion check: PR 显示 55 tests 在 Ubuntu + Windows 两条流水线通过；`master` 包含提交 `55cf481`。完成后下一动作才转到「更新 userscript 2.3.1 并重导」。
 
 ## Read First
 
