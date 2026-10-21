@@ -190,6 +190,16 @@ def test_inspect_export_reports_metadata_and_warnings(write_json):
     assert any("duplicate" in warning for warning in report["warnings"])
 
 
+def test_inspect_flags_non_numeric_ids(write_json):
+    source = write_json(
+        "bad.json",
+        {"tweets": [{"id": "https://t.co/x", "text": "", "author_username": "unknown"}]},
+    )
+    report = inspect_export(source)
+    assert report["actual"]["non_numeric_ids"] == 1
+    assert any("non-numeric" in warning for warning in report["warnings"])
+
+
 def test_legacy_polluted_payload_can_be_pruned(write_json, database):
     """Old exports contained author objects as fake tweets; prune must clean them."""
     legacy = {

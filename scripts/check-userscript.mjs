@@ -197,6 +197,18 @@ const bookmarkResponse = {
                                     },
                                 },
                             },
+                            // A card/URL entity can carry an id-like t.co URL; it must be rejected.
+                            {
+                                entryId: "card-object",
+                                content: {
+                                    itemContent: {
+                                        card: {
+                                            id: "https://t.co/card",
+                                            legacy: { card_url: "https://t.co/card" },
+                                        },
+                                    },
+                                },
+                            },
                             // The old collector treated this User object as a tweet.
                             {
                                 entryId: "user-object",
@@ -286,6 +298,11 @@ assert.equal(first.media[0].alt_text, "a photo");
 assert.equal(first.media[1].duration_ms, 30000);
 assert.equal(api.collector.get("1800000000000000002").author_username, "carol");
 assert.equal(api.collector.get("1600000000000000003").text, "quoted body");
+assert.equal(
+    api.extractTweetCandidate({ id: "https://t.co/x", legacy: {} }),
+    null,
+    "t.co/card ids must not be treated as tweets",
+);
 
 // A missing timestamp must stay null rather than being fabricated.
 const noDate = api.extractTweetCandidate({

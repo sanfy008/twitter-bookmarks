@@ -53,6 +53,7 @@ def inspect_export(source: str | Path) -> dict[str, Any]:
         "records": len(records),
         "unique_ids": len(set(ids)),
         "duplicate_ids": len(ids) - len(set(ids)),
+        "non_numeric_ids": sum(1 for value in ids if not value.isdigit()),
         "invalid_records": invalid,
         "empty_text": empty_text,
         "unknown_author": unknown_author,
@@ -77,6 +78,8 @@ def inspect_export(source: str | Path) -> dict[str, Any]:
         warnings.append("declared oldest_id is not the minimum tweet id in the file")
     if actual["duplicate_ids"]:
         warnings.append(f"{actual['duplicate_ids']} duplicate tweet id(s)")
+    if actual["non_numeric_ids"]:
+        warnings.append(f"{actual['non_numeric_ids']} record(s) have a non-numeric tweet id")
     if invalid:
         warnings.append(f"{invalid} non-object record(s)")
     if empty_text:

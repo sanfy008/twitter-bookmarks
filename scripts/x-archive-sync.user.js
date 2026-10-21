@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         X/Twitter Bookmarks & Likes Incremental Syncer
 // @namespace    https://github.com/x-local-archive/x-local-archive
-// @version      2.3.0
+// @version      2.3.1
 // @description  手动触发、低频率地抓取 X 书签/点赞时间线并导出为 JSON，供本地 x-archive 导入。支持 History 新路由与旧书签/点赞路由。
 // @author       x-local-archive
 // @match        https://x.com/i/history*
@@ -19,7 +19,7 @@
 (function () {
     'use strict';
 
-    const VERSION = '2.3.0';
+    const VERSION = '2.3.1';
     const SCROLL_INTERVAL_MS = 2000;
     const STALL_LIMIT = 20; // 40s: X bookmark pagination can take 20-30s per page.
     const MAX_LOGS = 200;
@@ -230,6 +230,9 @@
 
         const id = tweet.rest_id || tweet.id_str || tweet.id;
         if (!id) return null;
+        // Real X tweet ids are numeric. Cards and URL entities can carry
+        // id-like values (often a t.co URL); reject them explicitly.
+        if (!/^\d+$/.test(String(id))) return null;
 
         const legacy = tweet.legacy || {};
         const userResult = tweet.core?.user_results?.result || {};
@@ -664,7 +667,14 @@
             return;
         }
         const account = currentType ? getCurrentAccount() : activeContext?.account || 'owner';
-        const tweets = currentTweets(type).map(({ _types, ...tweet }) => tweet);
+        const collected = currentTweets(type);
+        const tweets = collected
+            .filter(tweet => /^\d+$/.test(String(tweet.id)))
+            .map(({ _types, ...tweet }) => tweet);
+        const skipped = collected.length - tweets.length;
+        if (skipped > 0) {
+            logger.add('WARN', `跳过 ${skipped} 条无效记录（id 不是数字）`);
+        }
         if (tweets.length === 0) {
             logger.add('WARN', '没有可导出的数据');
             showMessage('尚未捕获到推文。', '#f4212e');

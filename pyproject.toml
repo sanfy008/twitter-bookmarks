@@ -1,6 +1,6 @@
 [project]
 name = "x-local-archive"
-version = "0.3.0"
+version = "0.3.1"
 description = "Local-first archive for X bookmarks and likes"
 readme = "README.md"
 requires-python = ">=3.12"

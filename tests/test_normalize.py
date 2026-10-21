@@ -191,6 +191,11 @@ def test_note_tweet_text_wins():
     assert _normalize(record)["text"] == "完整长文"
 
 
+def test_url_like_tweet_ids_are_rejected():
+    with pytest.raises(ValueError, match="URL"):
+        _normalize({"id": "https://t.co/x", "text": "", "legacy": {}})
+
+
 def test_missing_timestamp_is_not_fabricated():
     record = {"id": "1", "text": "no date"}
     assert _normalize(record)["created_at"] is None

@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.3.1 - 2026-10-21
+
+### Fixed
+
+- The collector only accepts numeric tweet ids. X card/URL entities carry
+  id-like t.co URLs and were previously collected as empty, authorless tweets.
+- `exportData` skips non-numeric ids and no longer selects one as `oldest_id`.
+- The importer rejects tweet ids that look like URLs.
+- `x-archive inspect` reports `non_numeric_ids` and warns when present.
+
+### Tests
+
+- Node fixture covers a card object with a t.co id.
+- Python tests cover URL-like id rejection and the inspect warning.
+
 ## 0.3.0 - 2026-10-21
 
 ### Added

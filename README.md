@@ -106,7 +106,7 @@ The importer accepts:
 
 Recognized common fields include:
 
-- ID: `rest_id`, `id`, `id_str`, `tweet_id`
+- ID: `rest_id`, `id`, `id_str`, `tweet_id` (must be numeric; t.co/card ids are rejected)
 - Text: `note_tweet...text`, `text`, `full_text`, `content`
 - Author: `core.user_results.result.core.screen_name`, `author`, `user`, or flat fields;
   optional `author_id`, `author_followers`, `author_verified`, `author_avatar`

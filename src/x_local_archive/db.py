@@ -652,6 +652,8 @@ def _normalize(record: dict[str, Any]) -> dict[str, Any]:
     tweet_id = str(_first(source, "rest_id", "id_str", "tweet_id", "id", default="")).strip()
     if not tweet_id:
         raise ValueError("tweet id is missing")
+    if "://" in tweet_id:
+        raise ValueError("tweet id looks like a URL")
 
     graph_username, graph_name = _author(record)
     username = (
