@@ -194,7 +194,7 @@ def export_data(
     *,
     fmt: str = "json",
     query: str | None = None,
-    limit: int = 1000,
+    limit: int | None = None,
     offset: int = 0,
     entry_type: str | None = None,
     account: str | None = None,
@@ -204,6 +204,11 @@ def export_data(
     has_media: bool = False,
     folder: str | None = None,
 ) -> str | Path:
+    """Render matching tweets to *fmt*.
+
+    `limit=None` exports every matching tweet. A default cap would silently
+    truncate a full archive, which is exactly what an export is for.
+    """
     fmt = fmt.lower()
     if fmt not in _FORMATS:
         raise ValueError(f"format must be one of {sorted(_FORMATS)}")
@@ -221,12 +226,27 @@ def export_data(
         "folder": folder,
     }
     if query:
-        rows = search(database, query, limit=min(limit, 1000), offset=offset, **filters)
+        # FTS-backed search validates 1..1000, so walk it in pages instead of
+        # raising the cap and risking an unbounded single query.
+        rows = []
+        page_size = min(limit or 1000, 1000)
+        while limit is None or len(rows) < limit:
+            page = search(database, query, limit=page_size, offset=offset + len(rows), **filters)
+            rows.extend(page)
+            if len(page) < page_size:
+                break
+        if limit is not None:
+            rows = rows[:limit]
         for row in rows:
             row.pop("rank", None)
             row.pop("snippet", None)
     else:
-        rows = list_tweets(database, limit=limit, offset=offset, **filters)
+        rows = list_tweets(
+            database,
+            limit=limit if limit is not None else 100000,
+            offset=offset,
+            **filters,
+        )
 
     ids = [str(row["id"]) for row in rows]
     with closing(_connect_read(database)) as connection:

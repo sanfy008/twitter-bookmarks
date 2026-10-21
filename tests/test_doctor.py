@@ -45,14 +45,53 @@ def test_doctor_is_clean_and_undo_removes_a_run(write_json, database):
 
 
 def test_undo_does_not_remove_shared_entries(write_json, database):
+    # Two different files that both contain tweet "1" (the second one
+    # additionally contains "2"). Undoing the first must keep "1", because the
+    # second run still claims it.
     first = write_json("a.json", payload("1"))
-    second = write_json("b.json", payload("1"))
+    second_payload = payload("1")
+    second_payload["tweets"].append(
+        {
+            "id": "2",
+            "text": "tweet 2",
+            "author_username": "alice",
+            "author_id": "42",
+            "created_at": "2024-01-02T00:00:00Z",
+        }
+    )
+    second = write_json("b.json", second_payload)
     import_json(database, first, "alice", "bookmark")
     import_json(database, second, "alice", "bookmark")
 
-    # The second import did not create a new archive entry (same account/tweet/type),
-    # so undoing it must not remove the entry owned by the first run.
-    result = undo_run(database, 2)
+    result = undo_run(database, 1)
+    assert result["entries_kept_shared"] == 1
     assert result["entries_removed"] == 0
     assert result["orphan_tweets_removed"] == 0
-    assert doctor(database)["counts"]["tweets"] == 1
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("SELECT id FROM tweets ORDER BY id").fetchall() == [
+            ("1",),
+            ("2",),
+        ]
+        assert connection.execute(
+            "SELECT count(*) FROM archive_entries WHERE tweet_id='1'"
+        ).fetchone() == (1,)
+
+
+def test_undo_removes_entries_no_other_run_claims(write_json, database):
+    import_json(database, write_json("a.json", payload("1")), "alice", "bookmark")
+    result = undo_run(database, 1)
+    assert result["entries_removed"] == 1
+    assert result["entries_kept_shared"] == 0
+    assert doctor(database)["counts"]["tweets"] == 0
+
+
+def test_undo_reports_divergent_reimport_as_duplicate(write_json, database):
+    """The same bytes imported twice must not create a second run."""
+    source = write_json("a.json", payload("1"))
+    first = import_json(database, source, "alice", "bookmark")
+    second = import_json(database, source, "alice", "bookmark")
+    assert first.duplicate_of is None
+    assert second.duplicate_of == 1
+    assert second.tweets_inserted == 0
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("SELECT count(*) FROM import_runs").fetchone() == (1,)

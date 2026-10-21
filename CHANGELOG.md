@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.4.0 - 2026-10-21
+
+### Fixed
+
+- Re-importing a thinner record no longer erases stored metadata. `text`,
+  `author_username`, `author_name`, `author_id`, `created_at`, `url`, `lang`,
+  `source` and relation ids keep their existing value when the incoming record
+  has nothing to offer, and the FTS copy is rebuilt from the effective text so
+  Chinese search keeps working. Media and entity rows are replaced only when
+  the payload actually supplies those fields.
+- The importer now rejects non-numeric tweet ids (`abc123`, synthetic ids) in
+  addition to URL-shaped ones, and rejects GraphQL `User` nodes even when the
+  response omits `__typename`.
+- `undo --run` no longer deletes entries that another import run still owns.
+  Provenance moved to the `entry_runs` table (schema v9), so undoing a run
+  detaches only the entries no other run claims. Orphan detection uses
+  `NOT EXISTS` instead of `NOT IN`, which silently matched nothing when a
+  `tweet_id` was NULL.
+- `export` no longer stops at 1000 tweets. The default is every matching row;
+  `--limit` still caps it explicitly.
+- Backups no longer overwrite each other when two runs start in the same
+  second, and retention only rotates backups belonging to the same database.
+- `doctor` resolves the backup directory from the database path instead of
+  assuming a fixed `data/` layout.
+
+### Changed
+
+- `import` reports `duplicate_of` and writes nothing when the same payload was
+  already imported, so re-running `sync.ps1` cannot create a second run or a
+  second backup.
+
+### Fixed (CI)
+
+- The workflow triggered on `main` while the repository uses `master`, so CI
+  had never run. Both branch names are now listed.
+
 ## 0.3.1 - 2026-10-21
 
 ### Fixed
