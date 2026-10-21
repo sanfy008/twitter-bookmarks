@@ -1,6 +1,6 @@
 # Candidate Exporter Audit
 
-Audit date: 2026-09-25
+Audit date: 2026-09-25 (updated 2026-10-21)
 
 ## Scope and safety boundary
 
@@ -49,6 +49,28 @@ Evidence reviewed:
 
 Decision: **rejected for current scope**. Although Docker was not demonstrated as required, automatic scrolling, unattended reloads, persistent synchronization, a local daemon, and automatic media downloads conflict with this project's explicit low-frequency, import-only boundary.
 
+## Bundled collector in this repository
+
+`scripts/x-archive-sync.user.js` (v2.0.0) is maintained by this project. It is not a
+third-party exporter, but it is subject to the same constraints:
+
+- Opt-in and manually started from the floating widget; it never runs on page load.
+- Runs only on `x.com/i/bookmarks*` and `x.com/<handle>/likes*`.
+- Accepts only the `Bookmarks`, `BookmarkFolderTimeline`, `Likes`, and `UserLikes`
+  GraphQL endpoints. Home timelines, tweet detail, and profile timelines are ignored.
+- Reads responses X already fetched; it never issues its own API requests.
+- Does not read cookies, tokens, or authorization headers, and sends nothing off-device.
+- Pauses while the tab is hidden; it does not perform unattended background collection.
+- Stops on `HTTP 401`/`429`, on the configured scroll limit, at the bottom of the
+  timeline, or when the user presses stop.
+- Writes a single JSON file to the browser's download directory.
+
+The installer exposes only the userscript file on a loopback port with a random port
+number, validates the `Host` header, and never serves the project directory, database,
+or inbox.
+
+Decision: **included, opt-in, manual**. It remains subject to the rules below.
+
 ## Selection outcome
 
 No exporter is automatically trusted or included.
@@ -60,7 +82,9 @@ For a one-time export, `prinsss/twitter-web-exporter` is the least invasive cand
 1. Use a separate browser profile containing no unrelated accounts.
 2. Review the exact installed source or release artifact, not only its repository README.
 3. Never copy `auth_token`, `ct0`, cookies, authorization headers, or session data into this repository.
-4. Operate manually and at low frequency. Do not add unattended scrolling, periodic reloads, or polling.
+4. Operate manually and at low frequency. Do not add unattended scrolling, periodic
+   reloads, background-tab collection, or polling. Automated scrolling is acceptable
+   only when the user starts it explicitly and can observe it.
 5. Stop on authentication errors, rate limits, unexpected network destinations, or permission changes.
 6. Export JSON to a private path excluded from Git.
 7. Verify record counts and sample tweet IDs before importing.

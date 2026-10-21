@@ -19,3 +19,8 @@ credentials/
 secrets/
 cookies/
 exports/private/
+inbox/*
+!inbox/.gitkeep
+!inbox/processed/.gitkeep
+!inbox/failed/
+!inbox/failed/.gitkeep

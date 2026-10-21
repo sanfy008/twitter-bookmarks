@@ -1,0 +1,5 @@
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.sqlite3 binary
+*.sqlite3-wal binary
+*.sqlite3-shm binary
