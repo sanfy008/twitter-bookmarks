@@ -99,3 +99,41 @@ def test_export_formats(write_json, database, tmp_path):
 
     filtered = json.loads(export_data(database, fmt="json", has_media=True))
     assert [row["id"] for row in filtered] == ["1"]
+
+
+def test_export_is_not_silently_truncated(write_json, database):
+    """A full export must cover every stored tweet, not a default page."""
+    payload = {
+        "account": "alice",
+        "type": "bookmark",
+        "tweets": [
+            {
+                "id": str(1200000000000000000 + index),
+                "text": f"tweet {index}",
+                "author_username": "alice",
+                "created_at": "2024-01-01T00:00:00Z",
+            }
+            for index in range(1200)
+        ],
+    }
+    import_json(database, write_json("bulk.json", payload), "alice", "bookmark")
+    exported = json.loads(export_data(database, fmt="json"))
+    assert len(exported) == 1200
+
+
+def test_export_limit_is_still_honoured(write_json, database):
+    payload = {
+        "account": "alice",
+        "type": "bookmark",
+        "tweets": [
+            {
+                "id": str(1300000000000000000 + index),
+                "text": f"tweet {index}",
+                "author_username": "alice",
+                "created_at": "2024-01-01T00:00:00Z",
+            }
+            for index in range(5)
+        ],
+    }
+    import_json(database, write_json("five.json", payload), "alice", "bookmark")
+    assert len(json.loads(export_data(database, fmt="json", limit=3))) == 3

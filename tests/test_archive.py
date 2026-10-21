@@ -58,7 +58,12 @@ def test_invalid_record_is_counted(write_json, database):
 
 
 def test_media_replacement_and_removal_delete_stale_rows(write_json, database):
-    tweet = {"id": "media-1", "text": "media test", "username": "alice", "media_urls": []}
+    tweet = {
+        "id": "1290000000000000001",
+        "text": "media test",
+        "username": "alice",
+        "media_urls": [],
+    }
     source = database.parent / "export.json"
 
     tweet["media_urls"] = ["https://example.test/a.jpg"]
@@ -167,3 +172,76 @@ def test_cli_import_search_and_missing_database_exit_codes(write_json, database,
     assert main(["--database", str(missing), "search", "SQLite"]) == 2
     assert "does not exist" in capsys.readouterr().out
     assert not missing.exists()
+
+
+def test_reimport_with_thinner_record_keeps_stored_metadata(write_json, database):
+    """A degraded re-export must not erase fields the earlier import captured.
+
+    The re-export path is the documented recovery route, so an older or partial
+    record arriving later cannot be allowed to blank the local archive.
+    """
+    rich = {
+        "id": "1290000000000000010",
+        "author_username": "alice",
+        "author_name": "Alice",
+        "text": "价值投资原文",
+        "created_at": "2024-04-21T17:46:07.000Z",
+        "url": "https://x.com/alice/status/1290000000000000010",
+        "entities": {"hashtags": ["AI"]},
+        "media": [{"url": "https://example.test/a.jpg", "type": "photo"}],
+    }
+    import_json(database, write_json("rich.json", {"tweets": [rich]}), "owner", "bookmark")
+
+    thin = {"id": "1290000000000000010", "text": "", "author_username": "unknown"}
+    import_json(database, write_json("thin.json", {"tweets": [thin]}), "owner", "bookmark")
+
+    with sqlite3.connect(database) as connection:
+        connection.row_factory = sqlite3.Row
+        row = connection.execute(
+            """SELECT author_username, author_name, text, created_at, url FROM tweets
+            WHERE id=?""",
+            (rich["id"],),
+        ).fetchone()
+        assert row["author_username"] == "alice"
+        assert row["author_name"] == "Alice"
+        assert row["text"] == "价值投资原文"
+        assert row["created_at"] == "2024-04-21T17:46:07+00:00"
+        assert row["url"] == "https://x.com/alice/status/1290000000000000010"
+        # Media and entities are only replaced when the payload supplies them.
+        assert connection.execute("SELECT count(*) FROM tweet_media").fetchone()[0] == 1
+        assert connection.execute("SELECT count(*) FROM tweet_entities").fetchone()[0] == 1
+
+    # The stored text must still be reachable through search.
+    assert search(database, "价值投资")[0]["author_username"] == "alice"
+
+
+def test_explicit_empty_media_still_removes_rows(write_json, database):
+    """An explicit `media: []` is data, not a missing field."""
+    tweet = {
+        "id": "1290000000000000011",
+        "text": "media test",
+        "author_username": "alice",
+        "media": [{"url": "https://example.test/a.jpg", "type": "photo"}],
+    }
+    import_json(database, write_json("one.json", {"tweets": [tweet]}), "owner", "bookmark")
+    tweet["media"] = []
+    import_json(database, write_json("two.json", {"tweets": [tweet]}), "owner", "bookmark")
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("SELECT count(*) FROM tweet_media").fetchone()[0] == 0
+
+
+def test_non_numeric_ids_are_rejected(write_json, database):
+    payload = {
+        "tweets": [
+            # A User profile node: numeric rest_id, no tweet body, no timestamp.
+            {"id": "42", "core": {"screen_name": "alice", "name": "Alice"}, "legacy": {}},
+            {"id": "abc123", "text": "letters", "author_username": "alice"},
+            {"id": "https://t.co/x", "text": "url", "author_username": "alice"},
+            {"id": "1290000000000000012", "text": "real", "author_username": "alice"},
+        ]
+    }
+    result = import_json(database, write_json("mixed.json", payload), "owner", "bookmark")
+    assert result.tweets_inserted == 1
+    assert result.errors == 3
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("SELECT id FROM tweets").fetchall() == [("1290000000000000012",)]

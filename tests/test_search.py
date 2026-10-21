@@ -72,12 +72,13 @@ def test_search_validates_limit_and_offset(write_json, database):
 
 def test_search_handles_special_characters(write_json, database):
     source = write_json(
-        "export.json", {"tweets": [{"id": "s1", "text": "C++ OR (archive)", "username": "a"}]}
+        "export.json",
+        {"tweets": [{"id": "1290000000000000002", "text": "C++ OR (archive)", "username": "a"}]},
     )
     import_json(database, source, "owner", "bookmark")
-    assert search(database, "C++")[0]["id"] == "s1"
-    assert search(database, "OR")[0]["id"] == "s1"
-    assert search(database, "(archive")[0]["id"] == "s1"
+    assert search(database, "C++")[0]["id"] == "1290000000000000002"
+    assert search(database, "OR")[0]["id"] == "1290000000000000002"
+    assert search(database, "(archive")[0]["id"] == "1290000000000000002"
     with pytest.raises(ValueError):
         search(database, "+++")
 

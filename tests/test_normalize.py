@@ -221,3 +221,20 @@ def test_unknown_author_does_not_produce_a_fake_url():
 def test_timestamp_normalization(value, expected):
     record = {"id": "1", "text": "x", "created_at": value}
     assert _normalize(record)["created_at"] == expected
+
+
+def test_typeless_user_objects_are_rejected():
+    """GraphQL can omit __typename; a profile node must still not pass as a tweet."""
+    with pytest.raises(ValueError, match="not a tweet object"):
+        _normalize(
+            {
+                "rest_id": "42",
+                "core": {"screen_name": "alice", "name": "Alice"},
+                "legacy": {},
+            }
+        )
+
+
+def test_non_numeric_tweet_ids_are_rejected():
+    with pytest.raises(ValueError, match="not numeric"):
+        _normalize({"id": "abc123", "text": "letters", "legacy": {}})

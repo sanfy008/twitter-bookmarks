@@ -72,7 +72,12 @@ def build_parser() -> argparse.ArgumentParser:
     exporter.add_argument("--format", choices=("json", "csv", "md", "html"), default="json")
     exporter.add_argument("--out", type=Path)
     exporter.add_argument("--query")
-    exporter.add_argument("--limit", type=int, default=1000)
+    exporter.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="maximum number of tweets to export (default: every matching tweet)",
+    )
     exporter.add_argument("--offset", type=int, default=0)
     exporter.add_argument("--type", dest="entry_type", choices=("bookmark", "like"))
     exporter.add_argument("--account")

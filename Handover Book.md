@@ -1,6 +1,6 @@
 # Handover Book — X Local Archive
 
-> **ReadMe 例外声明**：本次 project-save 按用户明确要求，**不生成、不覆盖** 现有 `README.md`（该文件是项目产品文档，保留原样）。因此 project-save 的活性摘要由本文件的 Zone A 与 `docs/daily__pipeline_reviews/2026-10-21.md` 承担；`docs/project-state/RESUME.md` 提供下一会话的一分钟入口。`validate_closure.py` 的 ReadMe 契约检查在临时镜像中执行，真实工作区不改写 README。
+> **ReadMe 例外声明**：本次与上次 project-save 均按用户明确要求，**不生成、不覆盖** 现有 `README.md`（该文件是项目产品文档，保留原样）。因此 project-save 的活性摘要由本文件的 Zone A 与 `docs/daily__pipeline_reviews/2026-10-21.md` 承担；`docs/project-state/RESUME.md` 提供下一会话的一分钟入口。`validate_closure.py` 的 ReadMe 契约检查在临时镜像中执行，真实工作区不改写 README。
 
 ## Zone A — Living Dashboard
 
@@ -19,38 +19,43 @@
 - M3：支持 X History 路由 `/i/history` 与 `/i/history/likes`，保留旧路由；采集器 v2.1.0；提交 `a2b4a84`。
 - M4：修复“开始抓取清空首屏”导致 11 屏 0、导出缺 26 条、`newest_id` 偏移；采集器 v2.2.0 / package 0.2.2；新增 `x-archive inspect`；提交 `477d9d2` 并推送。
 - M5：真实库迁移 v0→v7，清理 1,189 条假记录与测试账号；当前 2,508 条推文、14.2 MB、`verify` 三项 ok。
+- M6：借鉴 xarchive/scrollmark/dogsheep/prinsss 的高价值能力，落地采集器 v2.3.0 元数据、Schema v8、搜索过滤、JSON/CSV/MD/HTML 导出、`doctor`、`undo --run`；提交 `09651d0`。
+- M7：复查用户 v2.2 导出，定位 104 条 t.co/card 伪记录与 `oldest_id` 污染；采集器 v2.3.1 / package 0.3.1 只接受数字 ID，导出/导入/`inspect` 同步收紧；提交 `5c74af9`。
+- M8（2026-10-21 第二轮）：对立性审查发现并修复 6 项缺陷 —— 降级重导覆盖好数据（P0）、导入侧非数字 ID 未校验（P0）、`undo --run` 误删其他批次条目（P0，schema v9 `entry_runs`）、CI 分支名错误导致从未运行、同秒备份互相覆盖、导出默认截断到 1000 条；package 0.4.0，55 pytest 通过。
 
 **🚧 Work In Progress**
 
-- `scripts/x-archive-sync.user.js` v2.2.0 尚未在真实浏览器会话中跑完整导出；用户需更新 Violentmonkey 后重跑。
-- `data/archive.sqlite3` 中 2,508 条真实推文的作者/媒体类型/URL 仍为 `unknown`，需重新导出才能修复。
+- 用户需把 Violentmonkey 更新到 **v2.3.1**，重新导出 `/i/history` 与 `/i/history/likes`；当前 用户 Downloads 中的 `bookmarks_ethan151300_20261021-162308.json` 是 v2.2，含 104 条非数字 ID 且无元数据。
+- `data/archive.sqlite3` 中 2,508 条历史推文的作者/媒体类型/URL 仍为 `unknown`，需重新导出才能补齐；新元数据表已就绪，等待导入。
+- 媒体下载、标签/笔记/已读 UI、真实浏览器 E2E 尚未实现。
 
 **🧱 Active Blockers**
 
-- 用户侧动作：用 v2.2.0 重新导出 `/i/history` 与 `/i/history/likes`；否则作者/链接缺口无法本地恢复。
-- CI：`.github/workflows/ci.yml` 已配置，但本次 push 后尚未观察到 GitHub Actions 运行结果（`[inferred]`，证据不足）。
+- 用户侧动作：更新到 v2.3.1 并重跑；否则 104 条伪记录与缺失元数据无法消除。
+- 覆盖度不确定：v2.2 文件的 1,098 条有效推文中，997 条已在库、101 条新增，但库内 1,174 条书签不在该文件；无法仅凭文件判断是“已取消书签”还是“运行未到底”。
+- CI：`.github/workflows/ci.yml` 原写 `branches: ["main"]`，而仓库默认分支是 `master`，因此五次推送**从未触发过 CI**；已改为 `["master","main"]`，但修正后的首次运行仍需推送后观察（`未执行/待确认`）。
 
 **🗂️ Latest Daily Review**
 
-- `docs/daily__pipeline_reviews/2026-10-21.md`（2026-10-21，首次建立）。
+- `docs/daily__pipeline_reviews/2026-10-21.md`（2026-10-21，第二轮更新）。
 
 **🚀 Next Prompt Recommendations**
 
-1. “把 v2.2.0 重新导出的 `bookmarks_*.json` / `likes_*.json` 放进 `inbox/`，先运行 `uv run x-archive inspect <file>`，确认 `empty_text=0`、`unknown_author=0`、`declared.newest_id == actual.newest_id`，再运行 `scripts/sync.ps1`。”
-2. “如果 `inspect` 仍报 `unknown_author` 或 `empty_text`，贴出 `inspect` 输出与日志中的 `接受端点` / `忽略端点` 行，检查 X 是否改用了新的 GraphQL 操作名。”
-3. “若要发布，先补真实浏览器 E2E（Playwright + 专用测试账号）与 `mypy`/coverage 门禁；不要修改 `README.md` 的产品定位。”
+1. “把 userscript 更新到 2.3.1，重新导出 `/i/history` 与 `/i/history/likes`，先运行 `uv run x-archive inspect <file>`，确认 `non_numeric_ids=0`、`empty_text=0`、`unknown_author=0`、`declared.newest_id/oldest_id == actual`，再运行 `scripts/sync.ps1`。”
+2. “如果 `inspect` 仍报 `unknown_author` 或 `non_numeric_ids`，贴出输出与日志中的 `接受端点`/`忽略端点` 行；不要直接导入 v2.2 的 1,202 条文件。”
+3. “若确认 v2.2 文件是完整书签列表（1,174 条差异是取消书签），再决定是否导入；否则先补一次完整 v2.3.1 全量导出。”
 
 ### A3. 🔍 Quality & Gap Analysis
 
-- 优势：零运行时依赖；38 pytest + Node 行为测试；Schema 迁移、备份与校验闭环；隐私边界清晰；CLI 覆盖导入/检索/统计/清理/体检。
-- 缺口：真实浏览器 E2E 缺失；作者恢复依赖用户重导出；CI 运行证据未观察；无 `mypy`/覆盖率门禁；只有本机备份；媒体只存 URL，不下载（有意为之）。
+- 优势：零运行时依赖；46 pytest + Node 行为测试；Schema v8 元数据模型；CJK 检索 + 过滤；备份/校验/doctor/undo 闭环；隐私边界清晰。
+- 缺口：真实浏览器 E2E 缺失；2,508 条历史作者缺失；v2.2 文件含 104 条伪记录且无元数据；CI 运行证据未观察；无 `mypy`/覆盖率；媒体未下载；标签/笔记/已读 UI 未实现；只有本机备份。
 - 技术债务见 B4。
 
 ### A4. 📊 Skill Dashboard
 
 | Skill 名称 | 累计触发 | 用户满意 | 用户纠正 | 效用评分 |
 |---|---|---|---|---|
-| project-save | 1 | 0 | 0 | ⭐⭐⭐（待确认） |
+| project-save | 2 | 1 | 0 | ⭐⭐⭐⭐（第二次待确认） |
 | gov-doc-refine | 0 | 0 | 0 | — |
 | mpa-thesis-review | 0 | 0 | 0 | — |
 | mpa-thesis-writing | 0 | 0 | 0 | — |
@@ -69,6 +74,15 @@
 | — | n/a | 保留首屏 + 按页面类型归属 | 首屏保留；书签/点赞不互串 | N/A | N/A | keep |
 | — | n/a | 备份保留 WAL | 备份旁残留 `-wal/-shm` | N/A | N/A | discard |
 | — | n/a | 备份落盘后 `journal_mode=DELETE` | 备份自包含、可立即删除 | N/A | N/A | keep |
+| — | n/a | v2.2 复合 ID 校验（id && legacy） | 104 条 t.co/card 伪记录；`oldest_id` 被污染 | N/A | N/A | discard |
+| — | n/a | 数字 ID + 导出过滤 + 导入拒绝 URL ID | Node/Python 测试通过；`inspect` 报 `non_numeric_ids=104` | N/A | N/A | keep |
+| — | n/a | 扁平推文模型（v0.2） | 无法保存作者资料/实体/指标/关系/文件夹 | N/A | N/A | discard |
+| — | n/a | Schema v8 元数据模型 | 作者/实体/指标/关系/文件夹落库；46 tests | N/A | N/A | keep |
+| — | n/a | 导出 JSON/CSV/MD/HTML | 四格式测试通过 | N/A | N/A | keep |
+| — | n/a | 重新导入时按 `content_hash` 覆盖全部列 | 实测 thinner 记录清空作者/时间/正文/媒体，中文检索失效 | N/A | N/A | discard |
+| — | n/a | 只覆盖非空字段 + 显式 media/entities 才替换 | 复现脚本：作者/正文/媒体/实体全保留，`search("价值投资")` 仍命中 | N/A | N/A | keep |
+| — | n/a | `undo` 以 `run_id` + `NOT IN` 判孤儿 | 实测删掉其他批次仍在使用的推文 | N/A | N/A | discard |
+| — | n/a | `entry_runs` 来源表（schema v9）+ `NOT EXISTS` | 共享条目保留，`entries_removed=0`；55 tests 通过 | N/A | N/A | keep |
 
 ## Zone B — Cumulative Knowledge Base
 
@@ -134,6 +148,36 @@
   - ❌ Alternatives：生成 `ReadMe.md`（Windows 大小写不敏感，会覆盖 README）；改名另存（偏离用户意图）。
   - 📌 Status: `Active`
 
+- **[DEC-011] 推文 ID 只接受纯数字** | Session: S-20261021-1640 | 2026-10-21
+  - 🔍 Context：v2.2 导出中 104 条 card/URL 实体的 `id` 是 t.co URL，被当成推文，且污染 `oldest_id`。
+  - ✅ Decision：采集器 `extractTweetCandidate` 只接受 `/^\d+$/` 的 ID；导出前过滤非数字；导入拒绝 `://` 型 ID；`inspect` 输出 `non_numeric_ids`。
+  - ❌ Alternatives：只靠 `__typename === 'Tweet'`（旧数据可能缺 typename）；在导入后 `prune`（会先写入垃圾）。
+  - 📌 Status: `Active`
+
+- **[DEC-012] 采用 Schema v8 元数据模型** | Session: S-20261021-1640 | 2026-10-21
+  - 🔍 Context：旧模型只有推文 + 媒体 URL，无法支持作者筛选、指标、线程、文件夹与后续分析。
+  - ✅ Decision：新增 `users`、`tweet_entities`、`tweet_metrics`、`bookmark_folders`；`tweets` 增加关系/语言/状态列；`archive_entries` 增加 folder/run/read_status；`tweet_media` 增加媒体元数据。
+  - ❌ Alternatives：继续用 `raw_json` 存全部（查询难、无索引）；只在导出 JSON 里保留（无法 SQL 分析）。
+  - 📌 Status: `Active`
+
+- **[DEC-013] 导出作为只读投影，不引入新依赖** | Session: S-20261021-1640 | 2026-10-21
+  - 🔍 Context：需要 CSV/Markdown/HTML 但不希望引入 pandas/Jinja2 等运行时依赖。
+  - ✅ Decision：用标准库 `csv`/`json`/字符串模板实现四种格式；过滤条件与 `search` 一致；`--out` 支持文件或目录。
+  - ❌ Alternatives：引入 pandas（重）；只在浏览器端导出（无法处理已入库数据）。
+  - 📌 Status: `Active`
+
+- **[DEC-014] doctor/undo 的安全语义** | Session: S-20261021-1640 | 2026-10-21
+  - 🔍 Context：需要可诊断、可回滚，但不能误删与其他批次共享的条目。
+  - ✅ Decision：`doctor` 只读检查并返回 issues/warnings；`undo --run` 只删除该 run 创建的 `archive_entries` 与因此产生的孤儿推文，共享条目保留。
+  - ❌ Alternatives：按时间窗口删除（可能误删）；恢复整库备份（丢失后续导入）。
+  - 📌 Status: `Active`
+
+- **[DEC-015] 借鉴功能但保持边界** | Session: S-20261021-1640 | 2026-10-21
+  - 🔍 Context：调研了 xarchive/scrollmark/dogsheep/prinsss/karakeep，功能很多，但项目定位是只读、手动、本地优先。
+  - ✅ Decision：只借鉴元数据、导出、检索、doctor/undo 等离线能力；不引入 X API/OAuth、cookie 抓取、后台采集、云同步、回复流或重框架。
+  - ❌ Alternatives：直接照搬 xarchive 的浏览器扩展/本地服务；引入 Next.js/Meilisearch（偏离零依赖）。
+  - 📌 Status: `Active`
+
 ### B2. 🎨 Style DNA
 
 - `[S-20261021]` 用户使用中文，偏好直接结论 + 可核对证据，不要空泛总结。
@@ -142,6 +186,10 @@
 - `[S-20261021]` 用户要求把成果推送到 `https://github.com/sanfy008/twitter-bookmarks.git`，并关注提交是否成功。
 - `[S-20261021]` 用户明确要求 project-save 保留现有 `README.md`，不生成/覆盖。
 - `[S-20261021]` 用户授权“自行判断，然后执行优化”，但破坏性操作仍需有备份与可验证的恢复路径。
+
+- `[S-20261021-1640]` 用户会把真实导出文件交给 Agent 复查，期望逐条/逐字段分析与明确结论。
+- `[S-20261021-1640]` 用户再次强调 project-save 不覆盖 `README.md`；该约束长期有效。
+- `[S-20261021-1640]` 用户接受“自行判断并实现”，但要求每一步有测试、可验证、并推送 Git。
 
 ### B3. ❌ Failed Attempts Archive
 
@@ -162,6 +210,12 @@
   - 💥 错误表现：`verify` 报 `foreign_keys: 4 violation(s)`；同时删除了一条原本存在的真实推文。
   - 💡 根因分析：Python `sqlite3` 默认 `foreign_keys=OFF`，未触发 `ON DELETE CASCADE`；绕过 CLI 也绕过了既有保护。
   - ✅ 纠正措施：从 `backups/x-archive-20261021-150015.sqlite3` 恢复并重跑 `init → prune → forget → verify`；DEC-009 固化“破坏性维护只走 CLI”。
+
+- **[FAIL-004] t.co/card 对象被当作推文** | Session: S-20261021-1640 | 2026-10-21
+  - 🔧 触发条件：v2.2 采集器在书签时间线中遇到 card/URL 实体，对象带 `id`（t.co URL）与 `legacy`。
+  - 💥 错误表现：用户导出 1,202 条中 104 条 `id` 为 `https://t.co/...`，无文本/作者/时间；`oldest_id` 被算成 URL。
+  - 💡 根因分析：`extractTweetCandidate` 只检查 `id` 与 `legacy/core/note_tweet`，未限制 ID 必须是数字；`exportData` 的 `BigInt` 转换把非数字 ID 变成 0。
+  - ✅ 纠正措施：v2.3.1 只接受数字 ID；导出过滤非数字；导入拒绝 URL 型 ID；`inspect` 输出 `non_numeric_ids`；Node/Python 测试覆盖。
 
 ### B4. 🏗️ Technical Debt Register
 
@@ -202,15 +256,136 @@
 
 - **[DEBT-008] CI 运行结果未观察** | Introduced: S-20261021-1607 | Status: `Open`
   - 📍 Location: `.github/workflows/ci.yml`
-  - ⚡ Impact: Low
-  - 💡 Suggested Fix: 打开 GitHub Actions 确认 Ubuntu/Windows 两条流水线首次运行结果。
+  - ⚡ Impact: Medium（已修正根因：原 `branches: ["main"]` 与 `master` 不匹配，CI 从未触发）
+  - 💡 Suggested Fix: 推送后打开 GitHub Actions 确认 Ubuntu/Windows 两条流水线首次真实运行结果；本地门禁通过不能替代 CI 证据。
 
 - **[DEBT-009] 旧 `import_runs` 记录元数据为空** | Introduced: S-20261021-1607 | Status: `Open`
   - 📍 Location: `data/archive.sqlite3` 的 `import_runs`
   - ⚡ Impact: Low
   - 💡 Suggested Fix: 历史行无法补齐；新导入已写入 `account/entry_type/exported_at/newest_id/total_tweets/source_sha256`。
 
+- **[DEBT-010] v2.2 导出未导入，覆盖度不确定** | Introduced: S-20261021-1640 | Status: `Open`
+  - 📍 Location: 用户 Downloads 中的 `bookmarks_ethan151300_20261021-162308.json`（私有，Git 忽略）
+  - ⚡ Impact: Medium
+  - 💡 Suggested Fix: 先用 v2.3.1 全量重导；若确认 v2.2 是完整列表，再过滤 104 条非数字记录后导入。当前 1,174 条库内书签不在该文件，无法判定是取消书签还是未跑到底。
+
+- **[DEBT-011] v2.3.1 真实浏览器 E2E 未执行** | Introduced: S-20261021-1640 | Status: `Open`
+  - 📍 Location: `scripts/check-userscript.mjs`
+  - ⚡ Impact: Medium
+  - 💡 Suggested Fix: Playwright + 专用测试账号，验证数字 ID、history 路由、首屏保留、元数据字段与导出文件。
+
+- **[DEBT-012] 媒体下载未实现** | Introduced: S-20261021-1640 | Status: `Open`
+  - 📍 Location: `tweet_media.local_path/sha256/status`
+  - ⚡ Impact: Medium（1,946 条媒体 URL 存在 link rot）
+  - 💡 Suggested Fix: 可选 `media --download`，按 sha256 去重、限速、可中断；视频可调用 yt-dlp/gallery-dl。
+
+- **[DEBT-013] 标签/笔记/已读 UI 未实现** | Introduced: S-20261021-1640 | Status: `Open`
+  - 📍 Location: `archive_entries.read_status` 仅建列
+  - ⚡ Impact: Low/Medium
+  - 💡 Suggested Fix: 增加 `tags`/`tweet_tags`/`notes` 与 CLI，再考虑本地 UI。
+
+- **[DEBT-014] 导出覆盖度元数据不足** | Introduced: S-20261021-1640 | Status: `Open`
+  - 📍 Location: 采集器 payload / `import_runs`
+  - ⚡ Impact: Medium
+  - 💡 Suggested Fix: 记录 `mode`（full/quick）、`pages`、`completed`、`cursor`/`coverage_note`，让“是否跑到底”可判定。
+
 ## Zone C — Session Archive
+
+### Session Snapshot: S-20261021-1640 | v1.1 | 2026-10-21 16:40
+
+**Session Summary**: 在 v0.2.2 基础上落地一轮借鉴优化：采集器 v2.3.0 捕获作者资料、entities、metrics、relations、媒体元数据与文件夹；Schema v8；搜索过滤；JSON/CSV/MD/HTML 导出；`doctor`/`undo`。随后复查用户 v2.2 导出，定位 104 条 t.co/card 伪记录与 `oldest_id` 污染，修复为 v2.3.1 / v0.3.1。真实库迁移 v8，46 pytest + Node 检查通过，提交 `09651d0`、`5c74af9` 已推送。
+
+**Delta from Previous Save (增量变化)**:
+
+- 📁 New files：`src/x_local_archive/export.py`、`tests/test_export.py`、`tests/test_doctor.py`。
+- ✏️ Modified files：`src/x_local_archive/{db.py,cli.py,inspect.py}`、`scripts/x-archive-sync.user.js`、`scripts/check-userscript.mjs`、`scripts/search.ps1`、`README.md`、`CHANGELOG.md`、`CANDIDATE_AUDIT.md`、`pyproject.toml`、`uv.lock`、`tests/{test_migration,test_normalize,test_pipeline,test_search}.py`。
+- 🗑️ Deleted files：无。
+- 🔑 Key changes：元数据模型 v8、四格式导出、doctor/undo、数字 ID 校验、用户 v2.2 导出复查、真实库 v7→v8 迁移。
+
+**Decisions Made This Session**: DEC-011、DEC-012、DEC-013、DEC-014、DEC-015。
+
+**Failed Attempts This Session**: FAIL-004。
+
+**Pending FAIL Items**: 无。
+
+**Structured Retention（正向结构化保留）**:
+
+- **Decisions**: 见 DEC-011..DEC-015；数字 ID 校验、Schema v8 元数据模型、导出只读投影、doctor/undo 安全语义、借鉴但保持边界。
+- **Constraints**: 用户要求保留 `README.md`；不读 cookie/不调用 X 写接口；手动、低频、可停止；Python 3.12 + uv；Windows PowerShell 5.1；SQLite FTS5；GitHub 仓库 `sanfy008/twitter-bookmarks`；`data/`、`backups/`、`inbox/` 私有且 Git 忽略；元数据导入需 v2.3.1。
+- **Verified Facts**: `pytest` 46 passed；`node scripts/check-userscript.mjs` passed；`x-archive verify` 三项 ok；`data/archive.sqlite3` 为 schema 8、2,508 tweets、2,171 bookmarks、804 likes、1,946 media、14,331,904 bytes；`master` 与 `origin/master` 均在 `5c74af9`；迁移前备份 `backups/x-archive-20261021-163228.sqlite3`；用户 v2.2 文件 1,202 条中 1,098 条有效、104 条非数字 ID、552 作者、608 条带媒体、857 个媒体项；997 条已在库、101 条新增、库内 1,174 条书签不在文件。
+- **Files & Paths**: `src/x_local_archive/{db.py,cli.py,inspect.py,export.py}`；`scripts/x-archive-sync.user.js`；`scripts/check-userscript.mjs`；`tests/{test_archive,test_cli,test_doctor,test_export,test_migration,test_normalize,test_pipeline,test_search}.py`；`docs/daily__pipeline_reviews/2026-10-21.md`；`docs/project-state/RESUME.md`；`backups/x-archive-20261021-163228.sqlite3`。
+- **Reusable Commands**: `uv run pytest`；`node scripts/check-userscript.mjs`；`powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify.ps1`；`uv run x-archive stats`；`uv run x-archive verify`；`uv run x-archive inspect <export.json>`；`uv run x-archive search "投资" --author alice --has-media`；`uv run x-archive export --format md --out exports\`；`uv run x-archive doctor`；`uv run x-archive undo --run <id>`；`git log --oneline -5`。
+- **Interface Contracts**: CLI `x-archive init|import|search|export|backup|verify|stats|prune|forget|doctor|undo|inspect`，全局 `--database` 与 `X_ARCHIVE_DB`；Schema v8（users/tweet_entities/tweet_metrics/bookmark_folders；tweets author_id/conversation/quoted/retweeted/in_reply/lang/source/status；archive_entries folder_id/run_id/read_status；tweet_media media_id/width/height/duration/alt/variants/sha256/status）；导出 JSON 字段含 `account/type/exported_at/newest_id/oldest_id/total_tweets/folder_id/tweets[]`，tweet 含 `author_id/followers/verified/avatar/entities/metrics/relations/media/status`；History 路由 `/i/history`（bookmark）、`/i/history/likes`（like）、`/i/history/bookmarks`（bookmark）；GraphQL 端点 `Bookmarks`、`BookmarkFolderTimeline`、`Likes`、`UserLikes`；备份命名 `x-archive-YYYYMMDD-HHMMSS.sqlite3`。
+- **Rejected Approaches**: 接受非数字 ID（t.co/card 伪记录）；扁平推文模型（无法存元数据）；直接导入 v2.2 文件（104 条错误 + 无元数据）；引入 X API/OAuth、cookie 抓取、后台采集、云同步、重框架；本轮实现媒体下载/标签 UI（范围过大）。
+- **Test Results**: Windows + Python 3.12 + SQLite 3.45.3 + PowerShell 5.1 + Node v22.13.0；46 pytest passed；Node 行为检查 passed；ruff check/format passed；`x-archive verify` 三项 ok；真实库 v8 迁移通过。真实浏览器 E2E 未执行（`未执行/待用户确认`）；GitHub Actions 运行结果仍未观察（`[inferred]`）；用户 v2.2 文件已复查但未导入。
+- **Open Issues**: 需用 v2.3.1 重导；2,508 条历史作者仍缺失；v2.2 文件 1,174 条差异无法判定；媒体未下载；标签/笔记/已读 UI 未实现；CI 未观察；无异地备份。
+- **Next Actions**: 1) 更新到 v2.3.1；2) 重导 `/i/history` 与 `/i/history/likes`；3) `inspect` 确认 `non_numeric_ids=0`、`empty_text=0`、`unknown_author=0`、`declared==actual`；4) `sync.ps1`；5) 评估媒体下载与覆盖度元数据。
+
+**Cognitive State at Close (会话关闭时的思维状态)**:
+
+- v2.2 文件是有价值的诊断样本，但不是可导入的最终产物：104 条 t.co/card 伪记录、无元数据、`oldest_id` 被污染。
+- 1,202 与库内 2,171 的差异无法仅凭文件判定；需要 v2.3.1 的完整运行与覆盖度元数据。
+- 边界保持：只做离线归档/检索/导出，不引入 X API、cookie、后台采集或云同步。
+
+**Context Window Highlights (上下文要点)**:
+
+- 用户要求调研 GitHub 同类项目，并把有价值的功能落到当前项目。
+- 用户随后指定复查 `bookmarks_ethan151300_20261021-162308.json`；Agent 从中定位 104 条伪记录与 `oldest_id` 问题。
+- 用户再次要求 project-save，并明确保持 README 不覆盖。
+
+**Session Reflect Report**:
+
+- **R1 — 成功模式**：先用 `inspect` + 逐条字段分析 + 数据库交集/差集，再决定修复点；数字 ID 校验同时修掉采集、导出、导入三个入口；迁移先在副本验证，再备份并迁移真实库。
+- **R2 — 边界案例**：① 1,202 与 2,171 的差异无法判定是取消书签还是未跑到底，未强行下结论；② 决定不直接导入 v2.2 文件，避免 104 条错误与无元数据；③ project-save 仍要求 ReadMe，但用户明确禁止覆盖 README，继续用临时镜像验证。
+- **R3 — 改进信号**：
+
+| 规则 | 本 Session 是否应触发 | 是否实际执行 |
+|---|---|---|
+| A1 先述计划 | Y | Y |
+| A4 先问后做 | Y | Y（用户已授权；迁移前先备份） |
+| B1 强制核查 | Y | Y |
+
+- 说明：工作区无 `AGENTS.md`/`GEMINI.md`，以上按 project-save Skill 内置规则自评。改进方向：导出/采集 payload 增加覆盖度元数据（mode/pages/completed/cursor），避免再次出现“是否跑到底”不可判定。
+
+**Compact File Tree Snapshot (精简文件树)**:
+
+```text
+12-Twitter_Bookmarks/
+├── README.md                         # 产品说明（本次 save 保留，不改写）
+├── CANDIDATE_AUDIT.md                # 第三方导出器审计（v2.3.1）
+├── CHANGELOG.md                      # 0.3.0 / 0.3.1 变更
+├── LICENSE
+├── pyproject.toml                    # 0.3.1
+├── uv.lock
+├── .github/workflows/ci.yml
+├── Handover Book.md                  # 本文件
+├── Handover Book - Archive.md        # 归档占位（暂无归档快照）
+├── docs/
+│   ├── daily__pipeline_reviews/{_TEMPLATE.md,2026-10-21.md}
+│   └── project-state/RESUME.md
+├── src/x_local_archive/
+│   ├── __init__.py                   # 0.3.1
+│   ├── cli.py                        # init/import/search/export/backup/verify/stats/prune/forget/doctor/undo/inspect
+│   ├── db.py                         # schema v8/migrations/import/search/list/doctor/undo
+│   ├── export.py                     # JSON/CSV/MD/HTML
+│   ├── inspect.py                    # 导出 JSON 体检
+│   └── py.typed
+├── scripts/
+│   ├── x-archive-sync.user.js        # 采集器 v2.3.1
+│   ├── check-userscript.mjs          # Node 行为测试
+│   ├── install_userscript.py
+│   └── *.ps1
+├── tests/
+│   ├── conftest.py
+│   ├── test_archive.py / test_cli.py / test_doctor.py / test_export.py
+│   ├── test_migration.py / test_normalize.py / test_pipeline.py / test_search.py
+│   └── fixtures/sample_export.json
+├── data/.gitkeep                     # 私有 DB（Git 忽略）
+├── backups/.gitkeep                  # 私有备份（Git 忽略）
+└── inbox/{.gitkeep, failed/.gitkeep} # 私有导出（Git 忽略）
+```
+
+---
 
 ### Session Snapshot: S-20261021-1607 | v1.0 | 2026-10-21 16:07
 
