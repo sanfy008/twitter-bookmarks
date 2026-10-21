@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.1 - 2026-10-21
+
+### Fixed
+
+- The userscript now recognises X's History routes. `x.com/i/history` is treated as
+  Bookmarks and `x.com/i/history/likes` as Likes; the legacy `/i/bookmarks` and
+  `/<handle>/likes` routes still work. The Videos and Articles tabs are ignored.
+- On History routes the account is read from the profile link instead of the path, so
+  `history` is never mistaken for a username.
+
+### Added
+
+- Userscript behaviour tests cover the History routes, trailing slashes, and account
+  detection.
+
 ## 0.2.0 - 2026-10-21
 
 ### Fixed

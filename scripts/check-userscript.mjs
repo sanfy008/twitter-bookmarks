@@ -266,11 +266,35 @@ assert.equal(api.endpointMatchesPage("https://x.com/i/api/graphql/abc/TweetDetai
 // --- page detection -------------------------------------------------------
 sandbox.location.pathname = "/i/bookmarks";
 assert.equal(api.getPageType(), "bookmark");
+sandbox.location.pathname = "/i/bookmarks/folder-123";
+assert.equal(api.getPageType(), "bookmark");
+
+// History tab (the current UI): /i/history is Bookmarks, /i/history/likes is Likes.
+sandbox.location.pathname = "/i/history";
+assert.equal(api.getPageType(), "bookmark");
+sandbox.location.pathname = "/i/history/";
+assert.equal(api.getPageType(), "bookmark");
+sandbox.location.pathname = "/i/history/bookmarks";
+assert.equal(api.getPageType(), "bookmark");
+sandbox.location.pathname = "/i/history/likes";
+assert.equal(api.getPageType(), "like");
+sandbox.location.pathname = "/i/history/videos";
+assert.equal(api.getPageType(), null);
+sandbox.location.pathname = "/i/history/articles";
+assert.equal(api.getPageType(), null);
+
 sandbox.location.pathname = "/Ethan151300/likes";
 assert.equal(api.getPageType(), "like");
+assert.equal(api.getCurrentAccount(), "ethan151300");
 sandbox.location.pathname = "/home";
 assert.equal(api.getPageType(), null);
 sandbox.location.pathname = "/i/likes";
 assert.equal(api.getPageType(), null);
+
+// History routes do not contain the handle; the profile link is used instead.
+sandbox.location.pathname = "/i/history/likes";
+assert.equal(api.getCurrentAccount(), "owner");
+sandbox.document.querySelector = () => ({ getAttribute: () => "/Ethan151300" });
+assert.equal(api.getCurrentAccount(), "ethan151300");
 
 console.log("userscript behaviour checks passed");

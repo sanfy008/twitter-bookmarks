@@ -7,10 +7,12 @@ from x_local_archive.db import import_json, stats
 
 
 def test_cli_version(capsys):
+    from x_local_archive import __version__
+
     with pytest.raises(SystemExit) as excinfo:
         main(["--version"])
     assert excinfo.value.code == 0
-    assert "0.2.0" in capsys.readouterr().out
+    assert __version__ in capsys.readouterr().out
 
 
 def test_cli_rejects_mismatched_payload_type(write_json, database, capsys):

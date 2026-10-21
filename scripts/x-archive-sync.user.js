@@ -1,11 +1,13 @@
 // ==UserScript==
 // @name         X/Twitter Bookmarks & Likes Incremental Syncer
 // @namespace    https://github.com/x-local-archive/x-local-archive
-// @version      2.0.0
-// @description  手动触发、低频率地抓取 X 书签/点赞时间线并导出为 JSON，供本地 x-archive 导入。默认不自动滚动，不做后台抓取。
+// @version      2.1.0
+// @description  手动触发、低频率地抓取 X 书签/点赞时间线并导出为 JSON，供本地 x-archive 导入。支持 History 新路由与旧书签/点赞路由。
 // @author       x-local-archive
+// @match        https://x.com/i/history*
 // @match        https://x.com/i/bookmarks*
 // @match        https://x.com/*/likes*
+// @match        https://twitter.com/i/history*
 // @match        https://twitter.com/i/bookmarks*
 // @match        https://twitter.com/*/likes*
 // @grant        none
@@ -17,7 +19,7 @@
 (function () {
     'use strict';
 
-    const VERSION = '2.0.0';
+    const VERSION = '2.1.0';
     const SCROLL_INTERVAL_MS = 2000;
     const STALL_LIMIT = 12;
     const MAX_LOGS = 200;
@@ -84,17 +86,28 @@
     }
 
     function getPageType() {
-        const path = window.location.pathname.toLowerCase();
+        const path = window.location.pathname.toLowerCase().replace(/\/+$/, '');
+
+        // Legacy bookmarks route.
         if (path === '/i/bookmarks' || path.startsWith('/i/bookmarks/')) return 'bookmark';
+
+        // History tab: /i/history defaults to Bookmarks; Likes has its own tab.
+        // Videos and Articles are intentionally ignored.
+        if (path === '/i/history' || path === '/i/history/bookmarks') return 'bookmark';
+        if (path === '/i/history/likes') return 'like';
+        if (path.startsWith('/i/history/')) return null;
+
+        // Legacy profile likes route: /<handle>/likes.
         const parts = path.split('/').filter(Boolean);
         if (parts.length >= 2 && parts[0] !== 'i' && parts[1] === 'likes') return 'like';
         return null;
     }
 
     function getCurrentAccount() {
-        const path = window.location.pathname;
-        const parts = path.split('/').filter(Boolean);
-        if (getPageType() === 'like' && parts.length >= 2) {
+        const parts = window.location.pathname.split('/').filter(Boolean);
+        // Only /<handle>/likes carries the handle in the path. History routes
+        // (/i/history, /i/history/likes) do not, so fall back to the profile link.
+        if (parts.length >= 2 && parts[0] !== 'i' && parts[1].toLowerCase() === 'likes') {
             return parts[0].replace('@', '').toLowerCase();
         }
         const userLink = document.querySelector('a[data-testid="AppTabBar_Profile_Link"]');
@@ -568,6 +581,7 @@
             collector: tweetCollector,
             reset: () => tweetCollector.clear(),
             getPageType,
+            getCurrentAccount,
             endpointMatchesPage,
         };
     }

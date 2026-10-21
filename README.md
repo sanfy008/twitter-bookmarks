@@ -23,7 +23,10 @@ GraphQL responses X already loaded while you browse your own bookmarks or likes 
 It does not read cookies, does not send data anywhere, and only downloads a local JSON
 file. It is deliberately scoped:
 
-- It runs only on `x.com/i/bookmarks*` and `x.com/<handle>/likes*` (and the twitter.com equivalents).
+- It runs only on the bookmarks/likes surfaces: `x.com/i/history` (the current UI, where the
+  default tab is Bookmarks), `x.com/i/history/likes`, `x.com/i/bookmarks*`, and
+  `x.com/<handle>/likes*` (plus the twitter.com equivalents). Other History tabs
+  (Videos, Articles) are ignored.
 - It only accepts the `Bookmarks`, `BookmarkFolderTimeline`, `Likes`, and `UserLikes` endpoints.
 - It never auto-starts; you press **开始抓取** and can stop at any time.
 - It pauses while the tab is in the background, so it does not collect unattended.
@@ -72,7 +75,8 @@ version is stored in `PRAGMA user_version`.
    The installer serves **only** `x-archive-sync.user.js` on a random loopback port,
    validates the `Host` header, and shuts down after the download. It never exposes
    the project directory or the database.
-3. Open `x.com/i/bookmarks` or `x.com/<handle>/likes`, click **开始抓取**, and let it
+3. Open `x.com/i/history` (Bookmarks tab), `x.com/i/history/likes`, or the legacy
+   `x.com/i/bookmarks` / `x.com/<handle>/likes` page, click **开始抓取**, and let it
    scroll. Press **停止** at any time to export what has been captured.
 4. Move the downloaded JSON into `inbox\`.
 5. Run:
