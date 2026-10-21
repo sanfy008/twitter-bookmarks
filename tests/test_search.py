@@ -96,3 +96,49 @@ def test_fts_query_builder():
     assert build_fts_query("AI 投资") == '"AI"* AND "投 资"'
     with pytest.raises(ValueError):
         build_fts_query("+++")
+
+
+def test_search_filters(write_json, database):
+    first = write_json(
+        "a.json",
+        {
+            "account": "alice",
+            "type": "bookmark",
+            "folder_id": "f1",
+            "tweets": [
+                {
+                    "id": "1",
+                    "text": "投资 AI",
+                    "author_username": "alice",
+                    "author_id": "42",
+                    "created_at": "2024-01-01T00:00:00Z",
+                    "media": [{"url": "https://m/a.jpg", "type": "photo"}],
+                }
+            ],
+        },
+    )
+    second = write_json(
+        "b.json",
+        {
+            "account": "alice",
+            "type": "bookmark",
+            "tweets": [
+                {
+                    "id": "2",
+                    "text": "投资 BTC",
+                    "author_username": "bob",
+                    "author_id": "43",
+                    "created_at": "2025-01-01T00:00:00Z",
+                }
+            ],
+        },
+    )
+    import_json(database, first, "alice", "bookmark")
+    import_json(database, second, "alice", "bookmark")
+
+    assert {row["id"] for row in search(database, "投资", author="alice")} == {"1"}
+    assert {row["id"] for row in search(database, "投资", author="43")} == {"2"}
+    assert {row["id"] for row in search(database, "投资", since="2024-06-01")} == {"2"}
+    assert {row["id"] for row in search(database, "投资", until="2024-12-31")} == {"1"}
+    assert {row["id"] for row in search(database, "投资", has_media=True)} == {"1"}
+    assert {row["id"] for row in search(database, "投资", folder="f1")} == {"1"}

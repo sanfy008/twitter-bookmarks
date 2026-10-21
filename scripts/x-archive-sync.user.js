@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         X/Twitter Bookmarks & Likes Incremental Syncer
 // @namespace    https://github.com/x-local-archive/x-local-archive
-// @version      2.2.0
+// @version      2.3.0
 // @description  手动触发、低频率地抓取 X 书签/点赞时间线并导出为 JSON，供本地 x-archive 导入。支持 History 新路由与旧书签/点赞路由。
 // @author       x-local-archive
 // @match        https://x.com/i/history*
@@ -19,7 +19,7 @@
 (function () {
     'use strict';
 
-    const VERSION = '2.2.0';
+    const VERSION = '2.3.0';
     const SCROLL_INTERVAL_MS = 2000;
     const STALL_LIMIT = 20; // 40s: X bookmark pagination can take 20-30s per page.
     const MAX_LOGS = 200;
@@ -37,6 +37,7 @@
     let scrollCount = 0;
     let stallCount = 0;
     let activeContext = null; // {type, account} captured when a run starts
+    let currentFolderId = null;
 
     const config = {
         mode: localStorage.getItem('x_archive_cfg_mode') || 'incremental',
@@ -136,6 +137,88 @@
 
     // 只接受真正的 Tweet 节点。旧版本会把 user_results 里的 User 对象
     // （同样带 rest_id）当成推文，造成大量空文本记录。
+    function toInt(value) {
+        if (value === null || value === undefined || value === '') return null;
+        const number = Number(value);
+        return Number.isFinite(number) ? Math.trunc(number) : null;
+    }
+
+    function collectEntities(legacy) {
+        const source = legacy.entities || {};
+        const entities = { hashtags: [], mentions: [], urls: [], symbols: [] };
+        for (const item of source.hashtags || []) {
+            const text = typeof item === 'string' ? item : item?.text;
+            if (text) entities.hashtags.push(text);
+        }
+        for (const item of source.user_mentions || []) {
+            const text = typeof item === 'string' ? item : item?.screen_name;
+            if (text) entities.mentions.push(text);
+        }
+        for (const item of source.urls || []) {
+            if (typeof item === 'string') entities.urls.push({ url: item, expanded: null });
+            else if (item?.url) entities.urls.push({ url: item.url, expanded: item.expanded_url || null });
+        }
+        for (const item of source.symbols || []) {
+            const text = typeof item === 'string' ? item : item?.text;
+            if (text) entities.symbols.push(text);
+        }
+        return entities;
+    }
+
+    function collectMetrics(tweet, legacy) {
+        return {
+            favorite: toInt(legacy.favorite_count),
+            retweet: toInt(legacy.retweet_count),
+            reply: toInt(legacy.reply_count),
+            quote: toInt(legacy.quote_count),
+            bookmark: toInt(legacy.bookmark_count),
+            views: toInt(tweet.views?.count ?? legacy.views?.count),
+        };
+    }
+
+    function collectRelations(legacy) {
+        return {
+            quoted_id: legacy.quoted_status_id_str || null,
+            retweeted_id: legacy.retweeted_status_id_str || null,
+            in_reply_to_id: legacy.in_reply_to_status_id_str || null,
+            conversation_id: legacy.conversation_id_str || null,
+        };
+    }
+
+    function collectMedia(legacy) {
+        const list = legacy.extended_entities?.media || legacy.entities?.media || [];
+        return list
+            .filter(item => item && (item.media_url_https || item.media_url))
+            .map(item => ({
+                url: item.media_url_https || item.media_url,
+                type: item.type || 'unknown',
+                media_id: item.media_key || item.id_str || null,
+                width: toInt(item.original_info?.width),
+                height: toInt(item.original_info?.height),
+                duration_ms: toInt(item.video_info?.duration_millis),
+                alt_text: item.ext_alt_text || null,
+                variants: Array.isArray(item.video_info?.variants) ? item.video_info.variants : null,
+            }));
+    }
+
+    function extractFolderId(url) {
+        let parsed = null;
+        try {
+            parsed = new URL(url, window.location.href);
+            const variables = parsed.searchParams.get('variables');
+            if (variables) {
+                const data = JSON.parse(variables);
+                const folderId = data.bookmark_collection_id || data.bookmarkCollectionId;
+                if (folderId) return String(folderId);
+            }
+        } catch (error) {
+            // ignore malformed variables
+        }
+        const pathname = parsed ? parsed.pathname : window.location.pathname;
+        const match = pathname.match(/\/i\/bookmarks\/([^/]+)/);
+        return match ? decodeURIComponent(match[1]) : null;
+    }
+
     function extractTweetCandidate(node) {
         if (!node || typeof node !== 'object') return null;
         let tweet = node;
@@ -158,21 +241,25 @@
         const noteText = tweet.note_tweet?.note_tweet_results?.result?.text;
         const text = noteText ?? legacy.full_text ?? legacy.text ?? tweet.text ?? '';
         const createdAt = legacy.created_at ? new Date(legacy.created_at) : null;
-        const mediaList = legacy.extended_entities?.media || legacy.entities?.media || [];
 
         return {
             id: String(id),
             author_username: username || null,
             author_name: authorName,
+            author_id: userResult.rest_id || userLegacy.id_str || null,
+            author_followers: toInt(userLegacy.followers_count),
+            author_verified: Boolean(userLegacy.verified || userResult.is_blue_verified),
+            author_avatar: userLegacy.profile_image_url_https || userResult.avatar?.image_url || null,
             text: text,
             created_at: createdAt && !Number.isNaN(createdAt.getTime()) ? createdAt.toISOString() : null,
             url: username ? `https://x.com/${username}/status/${id}` : null,
-            media: mediaList
-                .filter(item => item && (item.media_url_https || item.media_url))
-                .map(item => ({
-                    url: item.media_url_https || item.media_url,
-                    type: item.type || 'unknown',
-                })),
+            lang: legacy.lang || tweet.lang || null,
+            source: legacy.source || null,
+            entities: collectEntities(legacy),
+            metrics: collectMetrics(tweet, legacy),
+            relations: collectRelations(legacy),
+            media: collectMedia(legacy),
+            status: 'available',
         };
     }
 
@@ -216,6 +303,10 @@
     function handleNetworkPayload(url, rawText, source) {
         const pageType = getPageType();
         if (!pageType || !endpointMatchesPage(url, pageType)) return;
+        if (/BookmarkFolderTimeline/i.test(endpointName(url))) {
+            const folderId = extractFolderId(url);
+            if (folderId) currentFolderId = folderId;
+        }
         if (!rawText || !rawText.trim()) return;
 
         let data;
@@ -513,6 +604,7 @@
         isScrolling = true;
         scrollCount = 0;
         stallCount = 0;
+        currentFolderId = extractFolderId(window.location.href);
 
         const button = document.getElementById('x-archive-btn-sync');
         if (button) {
@@ -591,6 +683,8 @@
             newest_id: newest.id,
             oldest_id: oldest.id,
             total_tweets: tweets.length,
+            folder_id: currentFolderId,
+            folder_name: null,
             tweets,
         };
 
@@ -625,6 +719,7 @@
             getPageType,
             getCurrentAccount,
             endpointMatchesPage,
+            extractFolderId,
             currentTweets,
             startSync,
             stopCapture,

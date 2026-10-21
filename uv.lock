@@ -90,7 +90,7 @@ wheels = [
 
 [[package]]
 name = "x-local-archive"
-version = "0.2.2"
+version = "0.3.0"
 source = { editable = "." }
 
 [package.dev-dependencies]

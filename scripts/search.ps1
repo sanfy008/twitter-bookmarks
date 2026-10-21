@@ -2,7 +2,12 @@ param(
     [Parameter(Mandatory)][string]$Query,
     [int]$Limit = 20,
     [string]$Type = "",
-    [string]$Account = ""
+    [string]$Account = "",
+    [string]$Author = "",
+    [string]$Since = "",
+    [string]$Until = "",
+    [switch]$HasMedia,
+    [string]$Folder = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -18,6 +23,11 @@ if ($Type -and ($Type -notin @("bookmark", "like"))) {
 $arguments = @("run", "x-archive", "search", $Query, "--limit", $Limit)
 if ($Type) { $arguments += @("--type", $Type) }
 if ($Account) { $arguments += @("--account", $Account) }
+if ($Author) { $arguments += @("--author", $Author) }
+if ($Since) { $arguments += @("--since", $Since) }
+if ($Until) { $arguments += @("--until", $Until) }
+if ($HasMedia) { $arguments += "--has-media" }
+if ($Folder) { $arguments += @("--folder", $Folder) }
 
 & uv @arguments
 exit $LASTEXITCODE

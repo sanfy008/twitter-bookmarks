@@ -12,14 +12,17 @@ from pathlib import Path
 from . import __version__
 from .db import (
     backup,
+    doctor,
     forget_account,
     import_json,
     initialize,
     prune,
     search,
     stats,
+    undo_run,
     verify_database,
 )
+from .export import export_data
 from .inspect import inspect_export
 
 
@@ -59,6 +62,25 @@ def build_parser() -> argparse.ArgumentParser:
     finder.add_argument("--offset", type=int, default=0)
     finder.add_argument("--type", dest="entry_type", choices=("bookmark", "like"))
     finder.add_argument("--account")
+    finder.add_argument("--author")
+    finder.add_argument("--since")
+    finder.add_argument("--until")
+    finder.add_argument("--has-media", action="store_true")
+    finder.add_argument("--folder")
+
+    exporter = commands.add_parser("export")
+    exporter.add_argument("--format", choices=("json", "csv", "md", "html"), default="json")
+    exporter.add_argument("--out", type=Path)
+    exporter.add_argument("--query")
+    exporter.add_argument("--limit", type=int, default=1000)
+    exporter.add_argument("--offset", type=int, default=0)
+    exporter.add_argument("--type", dest="entry_type", choices=("bookmark", "like"))
+    exporter.add_argument("--account")
+    exporter.add_argument("--author")
+    exporter.add_argument("--since")
+    exporter.add_argument("--until")
+    exporter.add_argument("--has-media", action="store_true")
+    exporter.add_argument("--folder")
 
     backup_parser = commands.add_parser("backup")
     backup_parser.add_argument("destination", type=Path, nargs="?", default=Path("backups"))
@@ -68,6 +90,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     commands.add_parser("verify")
     commands.add_parser("stats")
+    commands.add_parser("doctor")
 
     pruner = commands.add_parser("prune")
     pruner.add_argument("--dry-run", action="store_true")
@@ -79,6 +102,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     inspector = commands.add_parser("inspect")
     inspector.add_argument("source", type=Path)
+
+    undo = commands.add_parser("undo")
+    undo.add_argument("--run", type=int, required=True)
     return parser
 
 
@@ -105,11 +131,33 @@ def main(argv: list[str] | None = None) -> int:
                         offset=args.offset,
                         entry_type=args.entry_type,
                         account=args.account,
+                        author=args.author,
+                        since=args.since,
+                        until=args.until,
+                        has_media=args.has_media,
+                        folder=args.folder,
                     ),
                     ensure_ascii=False,
                     indent=2,
                 )
             )
+        elif args.command == "export":
+            result = export_data(
+                args.database,
+                args.out,
+                fmt=args.format,
+                query=args.query,
+                limit=args.limit,
+                offset=args.offset,
+                entry_type=args.entry_type,
+                account=args.account,
+                author=args.author,
+                since=args.since,
+                until=args.until,
+                has_media=args.has_media,
+                folder=args.folder,
+            )
+            print(result)
         elif args.command == "backup":
             print(f"Backup verified: {backup(args.database, args.destination, keep=args.keep)}")
         elif args.command == "verify":
@@ -118,6 +166,18 @@ def main(argv: list[str] | None = None) -> int:
             return 0 if all(value == "ok" for value in result.values()) else 1
         elif args.command == "stats":
             print(json.dumps(stats(args.database), ensure_ascii=False, indent=2))
+        elif args.command == "doctor":
+            result = doctor(args.database)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 1 if result["issues"] else 0
+        elif args.command == "undo":
+            print(
+                json.dumps(
+                    undo_run(args.database, args.run),
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
         elif args.command == "prune":
             print(
                 json.dumps(

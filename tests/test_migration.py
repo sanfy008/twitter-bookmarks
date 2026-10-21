@@ -53,6 +53,20 @@ def test_v0_database_is_migrated_in_place(tmp_path):
         assert connection.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='import_errors'"
         ).fetchone()
+        for table in ("users", "tweet_entities", "tweet_metrics", "bookmark_folders"):
+            assert connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+            ).fetchone()
+        tweet_columns = {row[1] for row in connection.execute("PRAGMA table_info(tweets)")}
+        assert {
+            "author_id",
+            "conversation_id",
+            "quoted_tweet_id",
+            "lang",
+            "status",
+        } <= tweet_columns
+        entry_columns = {row[1] for row in connection.execute("PRAGMA table_info(archive_entries)")}
+        assert {"folder_id", "run_id", "read_status"} <= entry_columns
 
     assert search(path, "价值投资")[0]["id"] == "1"
 

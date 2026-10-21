@@ -68,14 +68,34 @@ function tweet(id, handle, name, text, createdAt, media = []) {
             user_results: {
                 result: {
                     __typename: "User",
-                    rest_id: `user-${handle}`,
+                    rest_id: `u-${handle}`,
                     core: { screen_name: handle, name },
+                    legacy: {
+                        followers_count: 1234,
+                        verified: true,
+                        profile_image_url_https: "https://a/avatar.jpg",
+                    },
                 },
             },
         },
         legacy: {
             full_text: text,
             created_at: createdAt,
+            lang: "zh",
+            favorite_count: 12,
+            retweet_count: 3,
+            reply_count: 2,
+            quote_count: 1,
+            bookmark_count: 4,
+            views: { count: "1000" },
+            quoted_status_id_str: "99",
+            conversation_id_str: "77",
+            entities: {
+                hashtags: [{ text: "AI" }],
+                user_mentions: [{ screen_name: "bob" }],
+                urls: [{ url: "https://t.co/x", expanded_url: "https://example.com/a" }],
+                symbols: [{ text: "BTC" }],
+            },
             ...(media.length ? { extended_entities: { media } } : {}),
         },
     };
@@ -105,11 +125,25 @@ const bookmarkResponse = {
                                                         media_url_https:
                                                             "https://pbs.twimg.com/media/a.jpg",
                                                         type: "photo",
+                                                        media_key: "3_1",
+                                                        original_info: { width: 1200, height: 800 },
+                                                        ext_alt_text: "a photo",
                                                     },
                                                     {
                                                         media_url_https:
                                                             "https://pbs.twimg.com/media/b.mp4",
                                                         type: "video",
+                                                        media_key: "7_2",
+                                                        video_info: {
+                                                            duration_millis: 30000,
+                                                            variants: [
+                                                                {
+                                                                    bitrate: 832000,
+                                                                    content_type: "video/mp4",
+                                                                    url: "https://v/b.mp4",
+                                                                },
+                                                            ],
+                                                        },
                                                     },
                                                 ],
                                             ),
@@ -227,13 +261,29 @@ assert.ok(!api.collector.has("user-alice"), "User rest_ids must not be collected
 const first = api.collector.get("1782103537234973176");
 assert.equal(first.author_username, "alice");
 assert.equal(first.author_name, "Alice");
+assert.equal(first.author_id, "u-alice");
+assert.equal(first.author_followers, 1234);
+assert.equal(first.author_verified, true);
+assert.equal(first.author_avatar, "https://a/avatar.jpg");
 assert.equal(first.text, "价值投资 hello");
 assert.equal(first.created_at, "2024-04-21T17:46:07.000Z");
 assert.equal(first.url, "https://x.com/alice/status/1782103537234973176");
+assert.equal(first.lang, "zh");
+assert.equal(first.entities.hashtags.join(","), "AI");
+assert.equal(first.entities.mentions.join(","), "bob");
+assert.equal(first.entities.urls[0].expanded, "https://example.com/a");
+assert.equal(first.metrics.favorite, 12);
+assert.equal(first.metrics.views, 1000);
+assert.equal(first.relations.quoted_id, "99");
+assert.equal(first.relations.conversation_id, "77");
 assert.deepEqual(
     first.media.map(item => item.type),
     ["photo", "video"],
 );
+assert.equal(first.media[0].width, 1200);
+assert.equal(first.media[0].height, 800);
+assert.equal(first.media[0].alt_text, "a photo");
+assert.equal(first.media[1].duration_ms, 30000);
 assert.equal(api.collector.get("1800000000000000002").author_username, "carol");
 assert.equal(api.collector.get("1600000000000000003").text, "quoted body");
 
@@ -361,5 +411,15 @@ sandbox.location.pathname = "/i/history/likes";
 assert.equal(api.getCurrentAccount(), "owner");
 sandbox.document.querySelector = () => ({ getAttribute: () => "/Ethan151300" });
 assert.equal(api.getCurrentAccount(), "ethan151300");
+
+// --- folder extraction ----------------------------------------------------
+assert.equal(
+    api.extractFolderId(
+        "https://x.com/i/api/graphql/abc/BookmarkFolderTimeline?variables=%7B%22bookmark_collection_id%22%3A%22f1%22%7D",
+    ),
+    "f1",
+);
+assert.equal(api.extractFolderId("https://x.com/i/bookmarks/f1"), "f1");
+assert.equal(api.extractFolderId("https://x.com/i/bookmarks"), null);
 
 console.log("userscript behaviour checks passed");

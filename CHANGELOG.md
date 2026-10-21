@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.3.0 - 2026-10-21
+
+### Added
+
+- Collector v2.3.0 captures author profile fields (`author_id`, followers, verified,
+  avatar), hashtags/mentions/expanded URLs, engagement metrics, quote/reply/conversation
+  ids, media dimensions/alt text/variants, `lang`, `source`, and the bookmark folder id.
+- Schema v8: `users`, `tweet_entities`, `tweet_metrics`, `bookmark_folders`; tweet
+  relation/lang/source/status columns; archive folder/run/read-status columns; media
+  metadata columns.
+- Search filters: `--author`, `--since`, `--until`, `--has-media`, `--folder`.
+- `x-archive export --format json|csv|md|html` with the same filters.
+- `x-archive doctor` for integrity/orphan/backup checks and `x-archive undo --run`
+  for per-run rollback.
+- Import records `run_id` on archive entries and stores bookmark folder metadata.
+
+### Changed
+
+- Search results include `media_count` and the latest `favorite_count`.
+- The userscript payload includes `oldest_id`, `folder_id`, and the metadata object.
+- Test suite expanded to 44 tests, including metadata landing, filters, export,
+  doctor, undo, and schema v8 migration.
+
 ## 0.2.2 - 2026-10-21
 
 ### Fixed

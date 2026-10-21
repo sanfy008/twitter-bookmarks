@@ -28,6 +28,9 @@ file. It is deliberately scoped:
   `x.com/<handle>/likes*` (plus the twitter.com equivalents). Other History tabs
   (Videos, Articles) are ignored.
 - It only accepts the `Bookmarks`, `BookmarkFolderTimeline`, `Likes`, and `UserLikes` endpoints.
+- It captures author profile fields, hashtags/mentions/expanded URLs, engagement metrics,
+  quote/reply/conversation ids, media dimensions/alt text/variants, and the bookmark
+  folder id when X exposes one.
 - It never auto-starts; you press **开始抓取** and can stop at any time.
 - It keeps the first page X loaded before you pressed start; starting a run does not clear it.
 - While X fetches the next page, the log reports `等待下一页` instead of a silent 0.
@@ -98,15 +101,25 @@ The importer accepts:
 - An array of tweet objects
 - A single tweet object
 - An object containing a `tweets`, `bookmarks`, `likes`, `items`, or `data` array
-- The userscript payload (`account`, `type`, `exported_at`, `newest_id`, `tweets`)
+- The userscript payload (`account`, `type`, `exported_at`, `newest_id`, `oldest_id`,
+  `total_tweets`, optional `folder_id`/`folder_name`, `tweets`)
 
 Recognized common fields include:
 
 - ID: `rest_id`, `id`, `id_str`, `tweet_id`
 - Text: `note_tweet...text`, `text`, `full_text`, `content`
-- Author: `core.user_results.result.core.screen_name`, `author`, `user`, or flat fields
+- Author: `core.user_results.result.core.screen_name`, `author`, `user`, or flat fields;
+  optional `author_id`, `author_followers`, `author_verified`, `author_avatar`
 - Time: `created_at`, `createdAt`, `date` (ISO 8601 and RFC 2822 are normalized to UTC)
-- Media: `media`, `media_urls`, `legacy.extended_entities.media`, `legacy.entities.media`
+- Media: `media`, `media_urls`, `legacy.extended_entities.media`, `legacy.entities.media`;
+  optional `media_id`, `width`, `height`, `duration_ms`, `alt_text`, `variants`
+- Entities: `entities.hashtags`, `entities.mentions` / `user_mentions`, `entities.urls`
+  (`url` + `expanded`), `entities.symbols`
+- Metrics: `metrics.favorite/retweet/reply/quote/bookmark/views` or the raw
+  `legacy.favorite_count` etc.
+- Relations: `relations.quoted_id/retweeted_id/in_reply_to_id/conversation_id` or the
+  raw `legacy.*_status_id_str` fields
+- `lang`, `source`, `status`
 
 Imports are idempotent. Tweets are deduplicated globally by tweet ID; bookmark and
 like membership is stored independently per account. Account handles are
@@ -141,11 +154,33 @@ Search uses SQLite FTS5 with BM25 relevance ranking and returns a `snippet` fiel
 - Chinese queries match arbitrary substrings; adjacency and order are enforced
   (`价值投资` matches, `资投` does not).
 - `--type` and `--account` filter by archive membership.
+- `--author` matches a handle or numeric author id; `--since` / `--until` filter the
+  normalized `created_at`; `--has-media` requires at least one media row; `--folder`
+  filters by bookmark folder id.
 - `--offset` paginates.
+
+```powershell
+.\scripts\search.ps1 -Query "投资" -Author alice -Since 2024-01-01 -HasMedia
+.\scripts\search.ps1 -Query "AI" -Folder f1
+```
 
 Indexing notes: CJK characters are indexed as single-character tokens with positions,
 which makes substring search possible without a segmentation dependency. The trade-off
 is a somewhat larger FTS index; `prune` and `VACUUM` keep it compact.
+
+## Export
+
+```powershell
+uv run x-archive export --format csv --out exports\
+uv run x-archive export --format md --query "投资" --author alice
+uv run x-archive export --format html --out exports\archive.html
+uv run x-archive export --format json --type bookmark --has-media --out exports\
+```
+
+Formats: `json`, `csv`, `md` (Markdown for Obsidian/notes), `html` (static page).
+The export accepts the same filters as search; `--out` may be a directory (timestamped
+filename) or a file path. Media URLs, hashtags, mentions, and the latest engagement
+metrics are included.
 
 ## Statistics and maintenance
 
@@ -155,6 +190,8 @@ uv run x-archive prune --dry-run
 uv run x-archive prune
 uv run x-archive forget --account old_account
 uv run x-archive inspect D:\Downloads\bookmarks_ethan151300_20261021-155610.json
+uv run x-archive doctor
+uv run x-archive undo --run 6
 ```
 
 - `stats` reports counts, date range, accounts, schema version, and the last import.
@@ -163,6 +200,10 @@ uv run x-archive inspect D:\Downloads\bookmarks_ethan151300_20261021-155610.json
 - `inspect` checks an export before importing it: declared vs actual counts, duplicate
   ids, empty text, unknown authors, media, date range, and whether `newest_id` /
   `oldest_id` match the file.
+- `doctor` checks integrity, foreign keys, FTS, orphans, empty text, unknown authors,
+  and the age of the newest backup; exits nonzero when issues are found.
+- `undo --run` removes the archive entries created by one import run and any tweets
+  left orphaned (shared entries from earlier runs are preserved).
 
 ## Backup and verification
 
@@ -210,11 +251,15 @@ uv run x-archive init
 uv run x-archive import D:\Private\bookmarks.json --account your_username --type bookmark
 uv run x-archive search "SQLite" --limit 20 --offset 0
 uv run x-archive search "投资" --type bookmark --account your_username
+uv run x-archive search "投资" --author alice --since 2024-01-01 --has-media
+uv run x-archive export --format md --query "投资" --out exports\
 uv run x-archive backup backups --keep 10
 uv run x-archive verify
 uv run x-archive stats
+uv run x-archive doctor
 uv run x-archive prune --dry-run
 uv run x-archive forget --account old_account
+uv run x-archive undo --run 6
 uv run x-archive inspect D:\Downloads\bookmarks_ethan151300_20261021-155610.json
 uv run x-archive --database D:\Private\archive.sqlite3 verify
 uv run x-archive --version
@@ -255,8 +300,11 @@ The suite covers:
 
 - Idempotent import, independent bookmark/like membership, tweet updates, FTS triggers
 - GraphQL normalization (author, note tweets, media, timestamps, non-tweet rejection)
+- Author profile, entities, metrics, relations, media metadata, and bookmark folders
 - Chinese substring search, ASCII prefix search, filters, snippets
-- Schema migration from the original v0 database
+- Schema migration (v0 -> v8) and the new users/entities/metrics/folders tables
+- Export to JSON, CSV, Markdown, and HTML
+- Doctor diagnostics and undo-by-run
 - Backup retention, integrity verification, and search from a backup
 - CLI exit codes, statistics, pruning, and account removal
 

@@ -223,3 +223,57 @@ def test_legacy_polluted_payload_can_be_pruned(write_json, database):
     assert stats(database)["tweets"] == 1
     assert search(database, "real tweet")[0]["author_username"] == "alice"
     assert verify_database(database)["fts"] == "ok"
+
+
+def test_metadata_tables_are_populated(write_json, database):
+    payload = userscript_payload()
+    payload["folder_id"] = "f1"
+    payload["folder_name"] = "AI"
+    tweet = payload["tweets"][0]
+    tweet.update(
+        {
+            "author_id": "42",
+            "author_followers": 100,
+            "author_verified": True,
+            "author_avatar": "https://a/avatar.jpg",
+            "lang": "zh",
+            "entities": {"hashtags": ["AI"]},
+            "metrics": {"favorite": 7},
+            "relations": {"quoted_id": "9", "conversation_id": "8"},
+            "media": [
+                {
+                    "url": "https://m/a.jpg",
+                    "type": "photo",
+                    "media_id": "m1",
+                    "width": 10,
+                    "height": 20,
+                    "alt_text": "alt",
+                }
+            ],
+        }
+    )
+    source = write_json("rich.json", payload)
+    import_json(database, source, "ethan151300", "bookmark")
+
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("SELECT count(*) FROM users").fetchone()[0] == 1
+        assert connection.execute("SELECT count(*) FROM tweet_entities").fetchone()[0] == 1
+        assert connection.execute(
+            "SELECT favorite_count FROM tweet_metrics WHERE tweet_id=?", (tweet["id"],)
+        ).fetchone() == (7,)
+        assert connection.execute(
+            "SELECT author_id,lang,conversation_id,quoted_tweet_id FROM tweets WHERE id=?",
+            (tweet["id"],),
+        ).fetchone() == ("42", "zh", "8", "9")
+        assert connection.execute(
+            "SELECT media_id,width,height,alt_text FROM tweet_media WHERE tweet_id=?",
+            (tweet["id"],),
+        ).fetchone() == ("m1", 10, 20, "alt")
+        assert connection.execute(
+            "SELECT folder_id,run_id,read_status FROM archive_entries WHERE tweet_id=?",
+            (tweet["id"],),
+        ).fetchone() == ("f1", 1, "unread")
+        assert connection.execute("SELECT folder_id,name FROM bookmark_folders").fetchone() == (
+            "f1",
+            "AI",
+        )

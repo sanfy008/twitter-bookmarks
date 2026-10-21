@@ -11,7 +11,7 @@ from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 
-LATEST_SCHEMA_VERSION = 7
+LATEST_SCHEMA_VERSION = 8
 
 # Base schema (version 0). Everything newer is applied through MIGRATIONS so
 # existing archives can be upgraded in place.
@@ -101,6 +101,71 @@ MIGRATIONS: dict[int, list[str]] = {
             snippet TEXT
         )""",
         "CREATE INDEX IF NOT EXISTS idx_import_errors_run ON import_errors(run_id)",
+    ],
+    8: [
+        "ALTER TABLE tweets ADD COLUMN author_id TEXT",
+        "ALTER TABLE tweets ADD COLUMN conversation_id TEXT",
+        "ALTER TABLE tweets ADD COLUMN in_reply_to_id TEXT",
+        "ALTER TABLE tweets ADD COLUMN quoted_tweet_id TEXT",
+        "ALTER TABLE tweets ADD COLUMN retweeted_tweet_id TEXT",
+        "ALTER TABLE tweets ADD COLUMN lang TEXT",
+        "ALTER TABLE tweets ADD COLUMN source TEXT",
+        "ALTER TABLE tweets ADD COLUMN status TEXT NOT NULL DEFAULT 'available'",
+        "ALTER TABLE tweets ADD COLUMN last_checked_at TEXT",
+        """CREATE TABLE IF NOT EXISTS users (
+            user_id TEXT PRIMARY KEY,
+            handle TEXT NOT NULL,
+            name TEXT,
+            followers INTEGER,
+            verified INTEGER,
+            avatar_url TEXT,
+            first_seen_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )""",
+        """CREATE TABLE IF NOT EXISTS tweet_entities (
+            tweet_id TEXT NOT NULL REFERENCES tweets(id) ON DELETE CASCADE,
+            kind TEXT NOT NULL CHECK (kind IN ('hashtag', 'mention', 'url', 'symbol')),
+            value TEXT NOT NULL,
+            expanded TEXT,
+            PRIMARY KEY (tweet_id, kind, value)
+        )""",
+        """CREATE TABLE IF NOT EXISTS tweet_metrics (
+            tweet_id TEXT NOT NULL REFERENCES tweets(id) ON DELETE CASCADE,
+            captured_at TEXT NOT NULL,
+            favorite_count INTEGER,
+            retweet_count INTEGER,
+            reply_count INTEGER,
+            quote_count INTEGER,
+            bookmark_count INTEGER,
+            view_count INTEGER,
+            PRIMARY KEY (tweet_id, captured_at)
+        )""",
+        """CREATE TABLE IF NOT EXISTS bookmark_folders (
+            folder_id TEXT PRIMARY KEY,
+            account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+            name TEXT,
+            first_seen_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )""",
+        "ALTER TABLE archive_entries ADD COLUMN folder_id TEXT",
+        "ALTER TABLE archive_entries ADD COLUMN run_id INTEGER",
+        "ALTER TABLE archive_entries ADD COLUMN read_status TEXT NOT NULL DEFAULT 'unread'",
+        "ALTER TABLE tweet_media ADD COLUMN media_id TEXT",
+        "ALTER TABLE tweet_media ADD COLUMN width INTEGER",
+        "ALTER TABLE tweet_media ADD COLUMN height INTEGER",
+        "ALTER TABLE tweet_media ADD COLUMN duration_ms INTEGER",
+        "ALTER TABLE tweet_media ADD COLUMN alt_text TEXT",
+        "ALTER TABLE tweet_media ADD COLUMN variants_json TEXT",
+        "ALTER TABLE tweet_media ADD COLUMN sha256 TEXT",
+        "ALTER TABLE tweet_media ADD COLUMN downloaded_at TEXT",
+        "ALTER TABLE tweet_media ADD COLUMN status TEXT NOT NULL DEFAULT 'remote'",
+        "ALTER TABLE import_runs ADD COLUMN folder_id TEXT",
+        "CREATE INDEX IF NOT EXISTS idx_tweets_author ON tweets(author_username)",
+        "CREATE INDEX IF NOT EXISTS idx_tweets_author_id ON tweets(author_id)",
+        "CREATE INDEX IF NOT EXISTS idx_entities_value ON tweet_entities(kind, value)",
+        "CREATE INDEX IF NOT EXISTS idx_metrics_tweet ON tweet_metrics(tweet_id)",
+        "CREATE INDEX IF NOT EXISTS idx_entries_folder ON archive_entries(folder_id)",
+        "CREATE INDEX IF NOT EXISTS idx_users_handle ON users(handle)",
     ],
 }
 
@@ -408,7 +473,20 @@ def _author(record: dict[str, Any]) -> tuple[str, str]:
     )
 
 
-def _media(record: dict[str, Any], legacy: dict[str, Any]) -> list[dict[str, str]]:
+def _int_or_none(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _bool_int(value: Any) -> int:
+    return 1 if value else 0
+
+
+def _media(record: dict[str, Any], legacy: dict[str, Any]) -> list[dict[str, Any]]:
     value = record.get("media") or record.get("media_urls")
     if value is None:
         extended = (legacy.get("extended_entities") or {}).get("media")
@@ -416,21 +494,125 @@ def _media(record: dict[str, Any], legacy: dict[str, Any]) -> list[dict[str, str
         value = extended or entities or []
     if not isinstance(value, list):
         return []
-    media: list[dict[str, str]] = []
+    media: list[dict[str, Any]] = []
     seen: set[str] = set()
     for item in value:
         if isinstance(item, str):
-            url, media_type = item, "unknown"
+            data: dict[str, Any] = {"url": item, "type": "unknown"}
         elif isinstance(item, dict):
-            url = _first(item, *_MEDIA_KEYS)
-            media_type = str(_first(item, "type", default="unknown"))
+            original = (
+                item.get("original_info") if isinstance(item.get("original_info"), dict) else {}
+            )
+            video = item.get("video_info") if isinstance(item.get("video_info"), dict) else {}
+            variants = video.get("variants") or item.get("variants")
+            if variants is None:
+                variants_json = None
+            elif isinstance(variants, str):
+                variants_json = variants
+            else:
+                variants_json = json.dumps(variants, ensure_ascii=False, sort_keys=True)
+            data = {
+                "url": str(_first(item, *_MEDIA_KEYS) or ""),
+                "type": str(_first(item, "type", default="unknown")),
+                "media_id": str(_first(item, "media_id", "media_key", "id_str", default=""))
+                or None,
+                "width": _int_or_none(_first(original, "width", default=item.get("width"))),
+                "height": _int_or_none(_first(original, "height", default=item.get("height"))),
+                "duration_ms": _int_or_none(
+                    _first(video, "duration_millis", default=item.get("duration_ms"))
+                ),
+                "alt_text": _first(item, "alt_text", "ext_alt_text"),
+                "variants": variants_json,
+            }
         else:
             continue
-        if not url or str(url) in seen:
+        url = data["url"]
+        if not url or url in seen:
             continue
-        seen.add(str(url))
-        media.append({"url": str(url), "type": media_type})
+        seen.add(url)
+        media.append(data)
     return media
+
+
+def _entities(record: dict[str, Any], legacy: dict[str, Any]) -> list[dict[str, Any]]:
+    value = record.get("entities")
+    if not isinstance(value, dict):
+        value = legacy.get("entities") if isinstance(legacy.get("entities"), dict) else {}
+    entities: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+
+    def add(kind: str, text: Any, expanded: Any = None) -> None:
+        if not text:
+            return
+        key = (kind, str(text))
+        if key in seen:
+            return
+        seen.add(key)
+        entities.append(
+            {
+                "kind": kind,
+                "value": str(text),
+                "expanded": str(expanded) if expanded else None,
+            }
+        )
+
+    for item in value.get("hashtags") or []:
+        add("hashtag", item if isinstance(item, str) else item.get("text"))
+    for item in value.get("user_mentions") or value.get("mentions") or []:
+        add(
+            "mention",
+            item if isinstance(item, str) else item.get("screen_name") or item.get("username"),
+        )
+    for item in value.get("urls") or []:
+        if isinstance(item, str):
+            add("url", item)
+        elif isinstance(item, dict):
+            add(
+                "url",
+                item.get("url") or item.get("expanded_url"),
+                item.get("expanded_url") or item.get("expanded"),
+            )
+    for item in value.get("symbols") or []:
+        add("symbol", item if isinstance(item, str) else item.get("text"))
+    return entities
+
+
+def _metrics(record: dict[str, Any], legacy: dict[str, Any]) -> dict[str, int | None]:
+    value = record.get("metrics") if isinstance(record.get("metrics"), dict) else {}
+
+    def pick(flat: str, raw: str) -> Any:
+        if value.get(flat) is not None:
+            return value.get(flat)
+        return legacy.get(raw)
+
+    views = value.get("views")
+    if views is None:
+        views = record.get("views") or legacy.get("views")
+        if isinstance(views, dict):
+            views = views.get("count")
+    return {
+        "favorite": _int_or_none(pick("favorite", "favorite_count")),
+        "retweet": _int_or_none(pick("retweet", "retweet_count")),
+        "reply": _int_or_none(pick("reply", "reply_count")),
+        "quote": _int_or_none(pick("quote", "quote_count")),
+        "bookmark": _int_or_none(pick("bookmark", "bookmark_count")),
+        "views": _int_or_none(views),
+    }
+
+
+def _relations(record: dict[str, Any], legacy: dict[str, Any]) -> dict[str, str | None]:
+    value = record.get("relations") if isinstance(record.get("relations"), dict) else {}
+
+    def pick(flat: str, raw: str) -> str | None:
+        text = value.get(flat) or legacy.get(raw)
+        return str(text) if text else None
+
+    return {
+        "quoted_id": pick("quoted_id", "quoted_status_id_str"),
+        "retweeted_id": pick("retweeted_id", "retweeted_status_id_str"),
+        "in_reply_to_id": pick("in_reply_to_id", "in_reply_to_status_id_str"),
+        "conversation_id": pick("conversation_id", "conversation_id_str"),
+    }
 
 
 def _records(payload: Any) -> list[Any]:
@@ -465,6 +647,7 @@ def _normalize(record: dict[str, Any]) -> dict[str, Any]:
     source = {**legacy, **record}
     author = record.get("author") if isinstance(record.get("author"), dict) else {}
     user = record.get("user") if isinstance(record.get("user"), dict) else {}
+    user_result = ((record.get("core") or {}).get("user_results") or {}).get("result") or {}
 
     tweet_id = str(_first(source, "rest_id", "id_str", "tweet_id", "id", default="")).strip()
     if not tweet_id:
@@ -497,27 +680,67 @@ def _normalize(record: dict[str, Any]) -> dict[str, Any]:
     ).strip()
     created_at = _iso_utc(_first(source, "created_at", "createdAt", "date"))
     media = _media(record, legacy)
+    entities = _entities(record, legacy)
+    metrics = _metrics(record, legacy)
+    relations = _relations(record, legacy)
+
+    user_legacy = user_result.get("legacy") if isinstance(user_result.get("legacy"), dict) else {}
+    avatar = user_result.get("avatar")
+    author_id = (
+        str(_first(user_result, "rest_id", "id_str", default="")).strip()
+        or str(_first(source, "author_id", default="")).strip()
+        or None
+    )
+    author_followers = _int_or_none(
+        _first(user_legacy, "followers_count", default=source.get("author_followers"))
+    )
+    author_verified = _bool_int(
+        user_legacy.get("verified")
+        or user_result.get("is_blue_verified")
+        or source.get("author_verified")
+    )
+    author_avatar = (
+        user_legacy.get("profile_image_url_https")
+        or (avatar.get("image_url") if isinstance(avatar, dict) else None)
+        or source.get("author_avatar")
+    )
+    lang = _first(source, "lang", default=None)
+    source_client = _first(source, "source", default=None)
+    status = str(record.get("status") or "available")
 
     url = _first(source, "url", "tweet_url", "permalink")
     if not url and username != "unknown" and tweet_id.isdigit():
         url = f"https://x.com/{username}/status/{tweet_id}"
 
-    canonical = {
+    stable = {
         "id": tweet_id,
         "author_username": username,
         "author_name": author_name,
+        "author_id": author_id,
         "text": text,
         "created_at": created_at,
         "url": str(url) if url else None,
+        "lang": str(lang) if lang else None,
+        "source": str(source_client) if source_client else None,
+        "entities": entities,
+        "relations": relations,
         "media": media,
+        "status": status,
     }
-    canonical["content_hash"] = hashlib.sha256(
-        json.dumps(canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
+    content_hash = hashlib.sha256(
+        json.dumps(stable, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
             "utf-8"
         )
     ).hexdigest()
-    canonical["raw_json"] = json.dumps(record, ensure_ascii=False, sort_keys=True)
-    return canonical
+    return {
+        **stable,
+        "author_followers": author_followers,
+        "author_verified": author_verified,
+        "author_avatar": str(author_avatar) if author_avatar else None,
+        "metrics": metrics,
+        "content_hash": content_hash,
+        "raw_json": json.dumps(record, ensure_ascii=False, sort_keys=True),
+    }
 
 
 def _error_snippet(record: Any) -> str:
@@ -553,9 +776,159 @@ def _sync_media(connection: sqlite3.Connection, tweet: dict[str, Any]) -> None:
     else:
         connection.execute("DELETE FROM tweet_media WHERE tweet_id=?", (tweet["id"],))
     connection.executemany(
-        """INSERT INTO tweet_media(tweet_id,media_url,media_type) VALUES(?,?,?)
-        ON CONFLICT(tweet_id,media_url) DO UPDATE SET media_type=excluded.media_type""",
-        [(tweet["id"], item["url"], item["type"]) for item in media],
+        """INSERT INTO tweet_media(
+        tweet_id,media_url,media_type,media_id,width,height,duration_ms,alt_text,variants_json)
+        VALUES(?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(tweet_id,media_url) DO UPDATE SET
+        media_type=excluded.media_type, media_id=excluded.media_id,
+        width=excluded.width, height=excluded.height,
+        duration_ms=excluded.duration_ms, alt_text=excluded.alt_text,
+        variants_json=excluded.variants_json""",
+        [
+            (
+                tweet["id"],
+                item["url"],
+                item["type"],
+                item.get("media_id"),
+                item.get("width"),
+                item.get("height"),
+                item.get("duration_ms"),
+                item.get("alt_text"),
+                item.get("variants"),
+            )
+            for item in media
+        ],
+    )
+
+
+def _sync_entities(connection: sqlite3.Connection, tweet: dict[str, Any]) -> None:
+    connection.execute("DELETE FROM tweet_entities WHERE tweet_id=?", (tweet["id"],))
+    rows = [
+        (tweet["id"], item["kind"], item["value"], item["expanded"]) for item in tweet["entities"]
+    ]
+    if rows:
+        connection.executemany(
+            "INSERT OR IGNORE INTO tweet_entities(tweet_id,kind,value,expanded) VALUES(?,?,?,?)",
+            rows,
+        )
+
+
+def _sync_user(connection: sqlite3.Connection, tweet: dict[str, Any], now: str) -> None:
+    if not tweet.get("author_id"):
+        return
+    connection.execute(
+        """INSERT INTO users(user_id,handle,name,followers,verified,avatar_url,
+        first_seen_at,updated_at) VALUES(?,?,?,?,?,?,?,?)
+        ON CONFLICT(user_id) DO UPDATE SET
+        handle=excluded.handle, name=excluded.name,
+        followers=coalesce(excluded.followers,users.followers),
+        verified=excluded.verified,
+        avatar_url=coalesce(excluded.avatar_url,users.avatar_url),
+        updated_at=excluded.updated_at""",
+        (
+            tweet["author_id"],
+            tweet["author_username"],
+            tweet["author_name"],
+            tweet["author_followers"],
+            tweet["author_verified"],
+            tweet["author_avatar"],
+            now,
+            now,
+        ),
+    )
+
+
+def _sync_metrics(connection: sqlite3.Connection, tweet: dict[str, Any], now: str) -> None:
+    metrics = tweet["metrics"]
+    values = (
+        metrics["favorite"],
+        metrics["retweet"],
+        metrics["reply"],
+        metrics["quote"],
+        metrics["bookmark"],
+        metrics["views"],
+    )
+    if all(value is None for value in values):
+        return
+    latest = connection.execute(
+        """SELECT favorite_count,retweet_count,reply_count,quote_count,bookmark_count,view_count
+        FROM tweet_metrics WHERE tweet_id=? ORDER BY captured_at DESC LIMIT 1""",
+        (tweet["id"],),
+    ).fetchone()
+    if latest is not None and tuple(latest) == values:
+        return
+    connection.execute(
+        """INSERT INTO tweet_metrics(tweet_id,captured_at,favorite_count,retweet_count,
+        reply_count,quote_count,bookmark_count,view_count) VALUES(?,?,?,?,?,?,?,?)
+        ON CONFLICT(tweet_id,captured_at) DO UPDATE SET
+        favorite_count=excluded.favorite_count, retweet_count=excluded.retweet_count,
+        reply_count=excluded.reply_count, quote_count=excluded.quote_count,
+        bookmark_count=excluded.bookmark_count, view_count=excluded.view_count""",
+        (tweet["id"], now, *values),
+    )
+
+
+def _insert_tweet(connection: sqlite3.Connection, tweet: dict[str, Any], now: str) -> None:
+    connection.execute(
+        """INSERT INTO tweets(
+        id,author_username,author_name,author_id,text,created_at,url,lang,source,
+        conversation_id,in_reply_to_id,quoted_tweet_id,retweeted_tweet_id,
+        status,last_checked_at,raw_json,content_hash,first_seen_at,updated_at,fts_text,fts_author)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (
+            tweet["id"],
+            tweet["author_username"],
+            tweet["author_name"],
+            tweet["author_id"],
+            tweet["text"],
+            tweet["created_at"],
+            tweet["url"],
+            tweet["lang"],
+            tweet["source"],
+            tweet["relations"]["conversation_id"],
+            tweet["relations"]["in_reply_to_id"],
+            tweet["relations"]["quoted_id"],
+            tweet["relations"]["retweeted_id"],
+            tweet["status"],
+            now,
+            tweet["raw_json"],
+            tweet["content_hash"],
+            now,
+            now,
+            to_index_text(tweet["text"]),
+            to_index_text(tweet["author_name"]),
+        ),
+    )
+
+
+def _update_tweet(connection: sqlite3.Connection, tweet: dict[str, Any], now: str) -> None:
+    connection.execute(
+        """UPDATE tweets SET author_username=?,author_name=?,author_id=?,text=?,created_at=?,
+        url=?,lang=?,source=?,conversation_id=?,in_reply_to_id=?,quoted_tweet_id=?,
+        retweeted_tweet_id=?,status=?,last_checked_at=?,raw_json=?,content_hash=?,
+        updated_at=?,fts_text=?,fts_author=? WHERE id=?""",
+        (
+            tweet["author_username"],
+            tweet["author_name"],
+            tweet["author_id"],
+            tweet["text"],
+            tweet["created_at"],
+            tweet["url"],
+            tweet["lang"],
+            tweet["source"],
+            tweet["relations"]["conversation_id"],
+            tweet["relations"]["in_reply_to_id"],
+            tweet["relations"]["quoted_id"],
+            tweet["relations"]["retweeted_id"],
+            tweet["status"],
+            now,
+            tweet["raw_json"],
+            tweet["content_hash"],
+            now,
+            to_index_text(tweet["text"]),
+            to_index_text(tweet["author_name"]),
+            tweet["id"],
+        ),
     )
 
 
@@ -588,6 +961,8 @@ def import_json(
     exported_at = _iso_utc(metadata.get("exported_at"))
     newest_id = metadata.get("newest_id")
     total_tweets = metadata.get("total_tweets")
+    folder_id = metadata.get("folder_id")
+    folder_name = metadata.get("folder_name")
     source_sha256 = hashlib.sha256(raw_bytes).hexdigest()
 
     initialize(database)
@@ -609,7 +984,7 @@ def import_json(
     with closing(connect(database)) as connection, connection:
         run_id = connection.execute(
             """INSERT INTO import_runs(source_path,started_at,account,entry_type,exported_at,
-            newest_id,total_tweets,source_sha256) VALUES(?,?,?,?,?,?,?,?)""",
+            newest_id,total_tweets,source_sha256,folder_id) VALUES(?,?,?,?,?,?,?,?,?)""",
             (
                 source_path.name,
                 started_at,
@@ -619,6 +994,7 @@ def import_json(
                 str(newest_id) if newest_id is not None else None,
                 int(total_tweets) if isinstance(total_tweets, int) else None,
                 source_sha256,
+                str(folder_id) if folder_id else None,
             ),
         ).lastrowid
         connection.execute(
@@ -630,57 +1006,39 @@ def import_json(
             "SELECT id FROM accounts WHERE username=?", (account,)
         ).fetchone()["id"]
 
-        existing = _existing_hashes(connection, [tweet["id"] for tweet in normalized])
         now = utc_now()
+        if folder_id:
+            connection.execute(
+                """INSERT INTO bookmark_folders(folder_id,account_id,name,first_seen_at,updated_at)
+                VALUES(?,?,?,?,?)
+                ON CONFLICT(folder_id) DO UPDATE SET
+                name=coalesce(excluded.name,bookmark_folders.name),
+                updated_at=excluded.updated_at""",
+                (str(folder_id), account_id, folder_name, now, now),
+            )
+
+        existing = _existing_hashes(connection, [tweet["id"] for tweet in normalized])
         for tweet in normalized:
             previous_hash = existing.get(tweet["id"])
             if previous_hash is None:
-                connection.execute(
-                    """INSERT INTO tweets(id,author_username,author_name,text,created_at,url,
-                    raw_json,content_hash,first_seen_at,updated_at,fts_text,fts_author)
-                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
-                    (
-                        tweet["id"],
-                        tweet["author_username"],
-                        tweet["author_name"],
-                        tweet["text"],
-                        tweet["created_at"],
-                        tweet["url"],
-                        tweet["raw_json"],
-                        tweet["content_hash"],
-                        now,
-                        now,
-                        to_index_text(tweet["text"]),
-                        to_index_text(tweet["author_name"]),
-                    ),
-                )
+                _insert_tweet(connection, tweet, now)
                 _sync_media(connection, tweet)
+                _sync_entities(connection, tweet)
                 inserted += 1
             elif previous_hash != tweet["content_hash"]:
-                connection.execute(
-                    """UPDATE tweets SET author_username=?,author_name=?,text=?,created_at=?,url=?,
-                    raw_json=?,content_hash=?,updated_at=?,fts_text=?,fts_author=? WHERE id=?""",
-                    (
-                        tweet["author_username"],
-                        tweet["author_name"],
-                        tweet["text"],
-                        tweet["created_at"],
-                        tweet["url"],
-                        tweet["raw_json"],
-                        tweet["content_hash"],
-                        now,
-                        to_index_text(tweet["text"]),
-                        to_index_text(tweet["author_name"]),
-                        tweet["id"],
-                    ),
-                )
+                _update_tweet(connection, tweet, now)
                 _sync_media(connection, tweet)
+                _sync_entities(connection, tweet)
                 updated += 1
 
+            _sync_user(connection, tweet, now)
+            _sync_metrics(connection, tweet, now)
+
             cursor = connection.execute(
-                """INSERT INTO archive_entries(account_id,tweet_id,entry_type,archived_at)
-                VALUES(?,?,?,?) ON CONFLICT(account_id,tweet_id,entry_type) DO NOTHING""",
-                (account_id, tweet["id"], entry_type, now),
+                """INSERT INTO archive_entries(account_id,tweet_id,entry_type,archived_at,
+                folder_id,run_id,read_status) VALUES(?,?,?,?,?,?, 'unread')
+                ON CONFLICT(account_id,tweet_id,entry_type) DO NOTHING""",
+                (account_id, tweet["id"], entry_type, now, folder_id, run_id),
             )
             entries += cursor.rowcount
 
@@ -726,6 +1084,11 @@ def search(
     offset: int = 0,
     entry_type: str | None = None,
     account: str | None = None,
+    author: str | None = None,
+    since: str | None = None,
+    until: str | None = None,
+    has_media: bool = False,
+    folder: str | None = None,
 ) -> list[dict[str, Any]]:
     if not query.strip():
         raise ValueError("query must not be empty")
@@ -745,6 +1108,7 @@ def search(
         if not _table_exists(connection, "tweets_fts"):
             raise ValueError("database is not initialized; run init or import first")
         tweet_columns = {row[1] for row in connection.execute("PRAGMA table_info(tweets)")}
+        entry_columns = {row[1] for row in connection.execute("PRAGMA table_info(archive_entries)")}
         fts_columns = {row[1] for row in connection.execute("PRAGMA table_info(tweets_fts)")}
         if "pk" in tweet_columns and "tweet_id" not in fts_columns:
             join = "t.pk=tweets_fts.rowid"
@@ -752,8 +1116,15 @@ def search(
             join = "t.id=tweets_fts.tweet_id"
         else:
             raise ValueError("unsupported database schema; run init to migrate")
+
+        extra = ", (SELECT count(*) FROM tweet_media m WHERE m.tweet_id=t.id) AS media_count"
+        if _table_exists(connection, "tweet_metrics"):
+            extra += (
+                ", (SELECT favorite_count FROM tweet_metrics m WHERE m.tweet_id=t.id"
+                " ORDER BY captured_at DESC LIMIT 1) AS favorite_count"
+            )
         sql = f"""SELECT t.id,t.author_username,t.author_name,t.text,t.created_at,t.url,
-        bm25(tweets_fts) AS rank FROM tweets_fts JOIN tweets t ON {join}
+        bm25(tweets_fts) AS rank{extra} FROM tweets_fts JOIN tweets t ON {join}
         WHERE tweets_fts MATCH ?"""
         params: list[Any] = [fts_query]
         if entry_type is not None or account is not None:
@@ -768,11 +1139,245 @@ def search(
                 sql += " AND lower(a.username)=lower(?)"
                 params.append(account.lstrip("@").strip())
             sql += ")"
+        if author:
+            handle = author.lstrip("@").strip()
+            if "author_id" in tweet_columns:
+                sql += " AND (lower(t.author_username)=lower(?) OR t.author_id=?)"
+                params.extend([handle, handle])
+            else:
+                sql += " AND lower(t.author_username)=lower(?)"
+                params.append(handle)
+        if since:
+            sql += " AND t.created_at >= ?"
+            params.append(since)
+        if until:
+            sql += " AND t.created_at <= ?"
+            params.append(until)
+        if has_media:
+            sql += " AND EXISTS (SELECT 1 FROM tweet_media m WHERE m.tweet_id=t.id)"
+        if folder:
+            if "folder_id" not in entry_columns:
+                raise ValueError("folder filter requires schema v8; run init to migrate")
+            sql += (
+                " AND EXISTS (SELECT 1 FROM archive_entries e"
+                " WHERE e.tweet_id=t.id AND e.folder_id=?)"
+            )
+            params.append(folder)
         sql += " ORDER BY rank,t.created_at DESC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
         rows = connection.execute(sql, params).fetchall()
 
     return [{**dict(row), "snippet": _snippet(row["text"], query)} for row in rows]
+
+
+def list_tweets(
+    database: str | Path,
+    *,
+    limit: int = 1000,
+    offset: int = 0,
+    entry_type: str | None = None,
+    account: str | None = None,
+    author: str | None = None,
+    since: str | None = None,
+    until: str | None = None,
+    has_media: bool = False,
+    folder: str | None = None,
+    ids: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    if not isinstance(limit, int) or not 1 <= limit <= 100000:
+        raise ValueError("limit must be between 1 and 100000")
+    if offset < 0:
+        raise ValueError("offset must be >= 0")
+    if entry_type is not None and entry_type not in {"bookmark", "like"}:
+        raise ValueError("entry_type must be bookmark or like")
+    database = Path(database)
+    if not database.is_file():
+        raise FileNotFoundError(f"database does not exist: {database}")
+    if ids is not None and not ids:
+        return []
+
+    with closing(_connect_read(database)) as connection:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(tweets)")}
+        entry_columns = {row[1] for row in connection.execute("PRAGMA table_info(archive_entries)")}
+        selected = ["t.id", "t.author_username", "t.author_name", "t.text", "t.created_at", "t.url"]
+        for optional in (
+            "lang",
+            "author_id",
+            "conversation_id",
+            "quoted_tweet_id",
+            "retweeted_tweet_id",
+            "in_reply_to_id",
+            "status",
+        ):
+            if optional in columns:
+                selected.append(f"t.{optional}")
+        sql = f"SELECT {','.join(selected)} FROM tweets t WHERE 1=1"
+        params: list[Any] = []
+        if ids is not None:
+            placeholders = ",".join("?" for _ in ids)
+            sql += f" AND t.id IN ({placeholders})"
+            params.extend(ids)
+        if entry_type is not None or account is not None:
+            sql += (
+                " AND EXISTS (SELECT 1 FROM archive_entries e JOIN accounts a ON a.id=e.account_id"
+                " WHERE e.tweet_id=t.id"
+            )
+            if entry_type is not None:
+                sql += " AND e.entry_type=?"
+                params.append(entry_type)
+            if account is not None:
+                sql += " AND lower(a.username)=lower(?)"
+                params.append(account.lstrip("@").strip())
+            sql += ")"
+        if author:
+            handle = author.lstrip("@").strip()
+            if "author_id" in columns:
+                sql += " AND (lower(t.author_username)=lower(?) OR t.author_id=?)"
+                params.extend([handle, handle])
+            else:
+                sql += " AND lower(t.author_username)=lower(?)"
+                params.append(handle)
+        if since:
+            sql += " AND t.created_at >= ?"
+            params.append(since)
+        if until:
+            sql += " AND t.created_at <= ?"
+            params.append(until)
+        if has_media:
+            sql += " AND EXISTS (SELECT 1 FROM tweet_media m WHERE m.tweet_id=t.id)"
+        if folder:
+            if "folder_id" not in entry_columns:
+                raise ValueError("folder filter requires schema v8; run init to migrate")
+            sql += (
+                " AND EXISTS (SELECT 1 FROM archive_entries e"
+                " WHERE e.tweet_id=t.id AND e.folder_id=?)"
+            )
+            params.append(folder)
+        sql += " ORDER BY t.created_at DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+        rows = connection.execute(sql, params).fetchall()
+    return [dict(row) for row in rows]
+
+
+def doctor(database: str | Path, *, backup_dir: str | Path | None = None) -> dict[str, Any]:
+    database = Path(database)
+    if not database.is_file():
+        raise FileNotFoundError(f"database does not exist: {database}")
+    verify = verify_database(database)
+    issues: list[str] = []
+    warnings: list[str] = []
+
+    with closing(_connect_read(database)) as connection:
+
+        def scalar(sql: str) -> int:
+            return int(connection.execute(sql).fetchone()[0])
+
+        schema_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+        counts = {
+            "tweets": scalar("SELECT count(*) FROM tweets"),
+            "bookmarks": scalar("SELECT count(*) FROM archive_entries WHERE entry_type='bookmark'"),
+            "likes": scalar("SELECT count(*) FROM archive_entries WHERE entry_type='like'"),
+            "media": scalar("SELECT count(*) FROM tweet_media"),
+            "empty_text": scalar("SELECT count(*) FROM tweets WHERE text=''"),
+            "unknown_author": scalar(
+                "SELECT count(*) FROM tweets WHERE author_username IN ('', 'unknown')"
+            ),
+            "orphan_tweets": scalar(
+                """SELECT count(*) FROM tweets t
+                WHERE NOT EXISTS (SELECT 1 FROM archive_entries e WHERE e.tweet_id=t.id)"""
+            ),
+            "orphan_media": scalar(
+                """SELECT count(*) FROM tweet_media m
+                WHERE NOT EXISTS (SELECT 1 FROM tweets t WHERE t.id=m.tweet_id)"""
+            ),
+        }
+        if _table_exists(connection, "users"):
+            counts["users"] = scalar("SELECT count(*) FROM users")
+        if _table_exists(connection, "tweet_entities"):
+            counts["entities"] = scalar("SELECT count(*) FROM tweet_entities")
+            counts["orphan_entities"] = scalar(
+                """SELECT count(*) FROM tweet_entities x
+                WHERE NOT EXISTS (SELECT 1 FROM tweets t WHERE t.id=x.tweet_id)"""
+            )
+        if _table_exists(connection, "tweet_metrics"):
+            counts["metrics"] = scalar("SELECT count(*) FROM tweet_metrics")
+            counts["orphan_metrics"] = scalar(
+                """SELECT count(*) FROM tweet_metrics x
+                WHERE NOT EXISTS (SELECT 1 FROM tweets t WHERE t.id=x.tweet_id)"""
+            )
+        if _table_exists(connection, "tweets_fts"):
+            counts["fts_docs"] = scalar("SELECT count(*) FROM tweets_fts")
+            if counts["fts_docs"] != counts["tweets"]:
+                issues.append(
+                    f"FTS documents ({counts['fts_docs']}) do not match tweets ({counts['tweets']})"
+                )
+
+    for key, value in verify.items():
+        if value != "ok":
+            issues.append(f"verify.{key}: {value}")
+    if counts["empty_text"]:
+        issues.append(f"{counts['empty_text']} tweet(s) have empty text")
+    if counts["unknown_author"]:
+        issues.append(f"{counts['unknown_author']} tweet(s) have an unknown author")
+    for key in ("orphan_tweets", "orphan_media", "orphan_entities", "orphan_metrics"):
+        if counts.get(key):
+            issues.append(f"{counts[key]} orphan {key.removeprefix('orphan_')} row(s)")
+    if schema_version < LATEST_SCHEMA_VERSION:
+        warnings.append(
+            f"schema v{schema_version} is older than v{LATEST_SCHEMA_VERSION}; run init to migrate"
+        )
+
+    directory = Path(backup_dir) if backup_dir else database.parent.parent / "backups"
+    backups = sorted(directory.glob("x-archive-*.sqlite3")) if directory.is_dir() else []
+    last_backup = None
+    if backups:
+        newest = max(backups, key=lambda path: path.stat().st_mtime)
+        age_days = (datetime.now(UTC).timestamp() - newest.stat().st_mtime) / 86400
+        last_backup = {
+            "path": str(newest),
+            "age_days": round(age_days, 1),
+            "count": len(backups),
+        }
+        if age_days > 7:
+            warnings.append(f"last backup is {age_days:.1f} days old")
+    else:
+        warnings.append("no x-archive backup found")
+
+    return {
+        "database": str(database.resolve()),
+        "schema_version": schema_version,
+        "verify": verify,
+        "counts": counts,
+        "last_backup": last_backup,
+        "issues": issues,
+        "warnings": warnings,
+    }
+
+
+def undo_run(database: str | Path, run_id: int) -> dict[str, Any]:
+    database = Path(database)
+    if not database.is_file():
+        raise FileNotFoundError(f"database does not exist: {database}")
+    with closing(connect(database)) as connection, connection:
+        run = connection.execute("SELECT id FROM import_runs WHERE id=?", (run_id,)).fetchone()
+        if run is None:
+            raise ValueError(f"import run not found: {run_id}")
+        entries = connection.execute(
+            "DELETE FROM archive_entries WHERE run_id=?", (run_id,)
+        ).rowcount
+        tweets = connection.execute(
+            "DELETE FROM tweets WHERE id NOT IN (SELECT tweet_id FROM archive_entries)"
+        ).rowcount
+        accounts = connection.execute(
+            "DELETE FROM accounts WHERE id NOT IN (SELECT DISTINCT account_id FROM archive_entries)"
+        ).rowcount
+    return {
+        "run_id": run_id,
+        "entries_removed": entries,
+        "orphan_tweets_removed": tweets,
+        "orphan_accounts_removed": accounts,
+        "note": None if entries else "run has no per-entry provenance (pre-v8 import)",
+    }
 
 
 def integrity_check(database: str | Path) -> str:
