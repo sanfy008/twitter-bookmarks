@@ -1,4 +1,6 @@
 import json
+import subprocess
+import sys
 
 import pytest
 
@@ -13,6 +15,19 @@ def test_cli_version(capsys):
         main(["--version"])
     assert excinfo.value.code == 0
     assert __version__ in capsys.readouterr().out
+
+
+def test_cli_module_entrypoint():
+    from x_local_archive import __version__
+
+    completed = subprocess.run(
+        [sys.executable, "-m", "x_local_archive.cli", "--version"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0
+    assert __version__ in completed.stdout
 
 
 def test_cli_rejects_mismatched_payload_type(write_json, database, capsys):

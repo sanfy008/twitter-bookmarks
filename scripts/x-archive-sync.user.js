@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         X/Twitter Bookmarks & Likes Incremental Syncer
 // @namespace    https://github.com/x-local-archive/x-local-archive
-// @version      2.3.1
+// @version      2.4.0
 // @description  手动触发、低频率地抓取 X 书签/点赞时间线并导出为 JSON，供本地 x-archive 导入。支持 History 新路由与旧书签/点赞路由。
 // @author       x-local-archive
 // @match        https://x.com/i/history*
@@ -19,10 +19,13 @@
 (function () {
     'use strict';
 
-    const VERSION = '2.3.1';
+    const VERSION = '2.4.0';
     const SCROLL_INTERVAL_MS = 2000;
     const STALL_LIMIT = 20; // 40s: X bookmark pagination can take 20-30s per page.
     const MAX_LOGS = 200;
+    const MAX_SEEN_IDS = 500;
+    const LEGACY_OLDER_STREAK_STOP = 5;
+    const KNOWN_STREAK_STOP = 10;
 
     // 只接受与当前页面类型匹配的 GraphQL 端点，避免把主时间线、推文详情、
     // 用户资料等无关数据混进书签/点赞导出。
@@ -38,6 +41,9 @@
     let stallCount = 0;
     let activeContext = null; // {type, account} captured when a run starts
     let currentFolderId = null;
+    let currentFolderName = null;
+    let incrementalStopReason = null;
+    let draftSaveTimer = null;
 
     const config = {
         mode: localStorage.getItem('x_archive_cfg_mode') || 'incremental',
@@ -266,34 +272,73 @@
         };
     }
 
-    function extractTweetsFromData(root, pageType = getPageType()) {
+    function extractFolderName(data) {
+        const directName =
+            data?.data?.bookmark_collection_timeline?.name ||
+            data?.data?.bookmark_collection_timeline?.timeline?.name ||
+            data?.data?.bookmark_folder?.name;
+        if (typeof directName === 'string' && directName.trim()) {
+            return directName.trim();
+        }
+        const heading = document.querySelector('h2[role="heading"] span, h2[role="heading"]');
+        const text = heading ? (heading.textContent || '').trim() : '';
+        if (text && text !== 'Bookmarks' && text !== '书签') {
+            return text;
+        }
+        return null;
+    }
+
+    function extractTweetsFromData(root, pageType = getPageType(), meta = null) {
         const type = pageType || 'unknown';
         let added = 0;
-        const stack = [root];
+        const primaryIds = [];
+        const seenPrimary = new Set();
+        const stack = [{ node: root, inQuoted: false }];
         while (stack.length) {
-            const node = stack.pop();
+            const { node, inQuoted } = stack.pop();
             if (!node || typeof node !== 'object') continue;
 
             const candidate = extractTweetCandidate(node);
             if (candidate) {
+                const isPrimary = !inQuoted;
+                if (isPrimary && !seenPrimary.has(candidate.id)) {
+                    seenPrimary.add(candidate.id);
+                    primaryIds.push(candidate.id);
+                }
                 const existing = tweetCollector.get(candidate.id);
                 if (!existing) {
-                    tweetCollector.set(candidate.id, { ...candidate, _types: new Set([type]) });
+                    tweetCollector.set(candidate.id, {
+                        ...candidate,
+                        _types: new Set([type]),
+                        _isPrimary: isPrimary,
+                    });
                     added++;
-                } else if (!existing._types.has(type)) {
-                    // The same post can be both bookmarked and liked.
-                    existing._types.add(type);
-                    added++;
+                } else {
+                    if (isPrimary) existing._isPrimary = true;
+                    if (!existing._types.has(type)) {
+                        // The same post can be both bookmarked and liked.
+                        existing._types.add(type);
+                        added++;
+                    }
                 }
             }
 
-            for (const key of Object.keys(node)) {
+            const keys = Object.keys(node);
+            // Reverse push so array/object order is preserved on LIFO pop.
+            for (let i = keys.length - 1; i >= 0; i--) {
+                const key = keys[i];
                 // legacy/entities/note_tweet 已在 candidate 中处理；user_results 里
                 // 全是 User 对象，继续遍历既无意义也容易误判。
                 if (key === 'legacy' || key === 'entities' || key === 'note_tweet' || key === 'user_results') continue;
                 const child = node[key];
-                if (child && typeof child === 'object') stack.push(child);
+                if (child && typeof child === 'object') {
+                    const childQuoted = inQuoted || key === 'quoted_status_result' || key === 'quoted_status';
+                    stack.push({ node: child, inQuoted: childQuoted });
+                }
             }
+        }
+        if (meta && Array.isArray(meta.primaryIds)) {
+            meta.primaryIds.push(...primaryIds);
         }
         return added;
     }
@@ -306,9 +351,15 @@
     function handleNetworkPayload(url, rawText, source) {
         const pageType = getPageType();
         if (!pageType || !endpointMatchesPage(url, pageType)) return;
-        if (/BookmarkFolderTimeline/i.test(endpointName(url))) {
+        const isFolderEndpoint = /BookmarkFolderTimeline/i.test(endpointName(url));
+        if (isFolderEndpoint) {
             const folderId = extractFolderId(url);
-            if (folderId) currentFolderId = folderId;
+            if (folderId) {
+                if (currentFolderId && currentFolderId !== folderId && collectedCount(pageType) > 0) {
+                    logger.add('WARN', `检测到切换了书签文件夹 (${currentFolderId} -> ${folderId})，建议先导出当前数据再抓下一个`);
+                }
+                currentFolderId = folderId;
+            }
         }
         if (!rawText || !rawText.trim()) return;
 
@@ -320,11 +371,27 @@
             return;
         }
 
-        const added = extractTweetsFromData(data, pageType);
+        if (Array.isArray(data?.errors) && data.errors.length > 0) {
+            const firstErr = data.errors[0];
+            logger.add('WARN', `X GraphQL 返回异常: ${firstErr?.message || JSON.stringify(firstErr)}`);
+        }
+
+        if (isFolderEndpoint) {
+            const folderName = extractFolderName(data);
+            if (folderName) currentFolderName = folderName;
+        }
+
+        const meta = { primaryIds: [] };
+        const added = extractTweetsFromData(data, pageType, meta);
+        const account = activeContext?.account || getCurrentAccount();
+        if (isScrolling && config.mode === 'incremental' && !incrementalStopReason) {
+            incrementalStopReason = shouldStopIncremental(pageType, account, meta.primaryIds);
+        }
         if (added > 0) {
             stallCount = 0;
             logger.add('SUCCESS', `[${source}:${endpointName(url)}] +${added} 条，累计 ${collectedCount(pageType)} 条`);
             updateUIStatus();
+            scheduleDraftSave(pageType, account);
         }
     }
 
@@ -375,12 +442,51 @@
         return `x_archive_last_${type}_${account}`;
     }
 
+    function seenIdsKey(type, account) {
+        return `x_archive_seen_${type}_${account}`;
+    }
+
     function getBreakpoint(type, account) {
         return localStorage.getItem(breakpointKey(type, account)) || '';
     }
 
     function setBreakpoint(type, account, id) {
         localStorage.setItem(breakpointKey(type, account), String(id));
+    }
+
+    function getSeenIds(type, account) {
+        try {
+            const raw = localStorage.getItem(seenIdsKey(type, account));
+            if (!raw) return new Set();
+            const parsed = JSON.parse(raw);
+            return Array.isArray(parsed) ? new Set(parsed.map(String)) : new Set();
+        } catch (error) {
+            return new Set();
+        }
+    }
+
+    function saveSeenIds(type, account, primaryIds) {
+        try {
+            const merged = [];
+            const seen = new Set();
+            for (const id of primaryIds) {
+                const strId = String(id);
+                if (!seen.has(strId)) {
+                    seen.add(strId);
+                    merged.push(strId);
+                }
+            }
+            for (const id of getSeenIds(type, account)) {
+                if (!seen.has(id)) {
+                    seen.add(id);
+                    merged.push(id);
+                }
+                if (merged.length >= MAX_SEEN_IDS) break;
+            }
+            localStorage.setItem(seenIdsKey(type, account), JSON.stringify(merged.slice(0, MAX_SEEN_IDS)));
+        } catch (error) {
+            // ignore quota errors
+        }
     }
 
     function currentTweets(type = getPageType()) {
@@ -392,14 +498,165 @@
         return currentTweets(type).length;
     }
 
-    function reachedBreakpoint(lastSeenId) {
-        const limit = toBigInt(lastSeenId);
-        if (limit === null) return false;
-        for (const tweet of currentTweets()) {
-            const value = toBigInt(tweet.id);
-            if (value !== null && value <= limit) return true;
+    function shouldStopIncremental(type, account, pagePrimaryIds = []) {
+        const seenIds = getSeenIds(type, account);
+        const primaryTweets = currentTweets(type).filter(tweet => tweet._isPrimary !== false);
+
+        if (seenIds.size > 0) {
+            // Whole non-empty page already archived: reliable stop even if old tweets were bookmarked recently.
+            if (pagePrimaryIds.length > 0 && pagePrimaryIds.every(id => seenIds.has(id))) {
+                return '整页推文均已归档，增量同步完成';
+            }
+            // Fallback: a streak of consecutive known primary tweets across pages.
+            let streak = 0;
+            for (const tweet of primaryTweets) {
+                if (seenIds.has(tweet.id)) {
+                    streak++;
+                    if (streak >= KNOWN_STREAK_STOP) {
+                        return `连续 ${KNOWN_STREAK_STOP} 条主时间线推文已归档，增量同步完成`;
+                    }
+                } else {
+                    streak = 0;
+                }
+            }
+            return null;
         }
-        return false;
+
+        // Legacy single-ID breakpoint fallback (before seenIds is populated).
+        const lastSeenId = getBreakpoint(type, account);
+        const limit = toBigInt(lastSeenId);
+        if (limit === null) return null;
+
+        let olderCount = 0;
+        for (const tweet of primaryTweets) {
+            if (tweet.id === lastSeenId) {
+                return `已到达上次断点 ${lastSeenId.slice(-6)}，增量同步完成`;
+            }
+            const value = toBigInt(tweet.id);
+            if (value !== null && value <= limit) {
+                olderCount++;
+                if (olderCount >= LEGACY_OLDER_STREAK_STOP) {
+                    return `连续 ${olderCount} 条推文早于断点 ${lastSeenId.slice(-6)}，增量同步完成`;
+                }
+            } else {
+                olderCount = 0;
+            }
+        }
+        return null;
+    }
+
+    const draftStore = {
+        dbName: 'x_archive_drafts_v1',
+        storeName: 'drafts',
+        available() {
+            return typeof indexedDB !== 'undefined';
+        },
+        open() {
+            return new Promise((resolve, reject) => {
+                if (!this.available()) {
+                    resolve(null);
+                    return;
+                }
+                try {
+                    const req = indexedDB.open(this.dbName, 1);
+                    req.onupgradeneeded = event => {
+                        const db = event.target.result;
+                        if (!db.objectStoreNames.contains(this.storeName)) {
+                            db.createObjectStore(this.storeName, { keyPath: 'key' });
+                        }
+                    };
+                    req.onsuccess = event => resolve(event.target.result);
+                    req.onerror = event => reject(event.target.error);
+                } catch (error) {
+                    resolve(null);
+                }
+            });
+        },
+        async save(type, account) {
+            const db = await this.open().catch(() => null);
+            if (!db) return;
+            const tweets = currentTweets(type).map(tweet => ({
+                ...tweet,
+                _types: Array.from(tweet._types || [type]),
+                _isPrimary: tweet._isPrimary !== false,
+            }));
+            const record = {
+                key: `${type}:${account}`,
+                type,
+                account,
+                folderId: currentFolderId,
+                folderName: currentFolderName,
+                updatedAt: Date.now(),
+                tweets,
+            };
+            return new Promise(resolve => {
+                try {
+                    const tx = db.transaction(this.storeName, 'readwrite');
+                    tx.objectStore(this.storeName).put(record);
+                    tx.oncomplete = () => {
+                        db.close();
+                        resolve();
+                    };
+                    tx.onerror = () => {
+                        db.close();
+                        resolve();
+                    };
+                } catch (error) {
+                    db.close();
+                    resolve();
+                }
+            });
+        },
+        async load(type, account) {
+            const db = await this.open().catch(() => null);
+            if (!db) return null;
+            return new Promise(resolve => {
+                try {
+                    const tx = db.transaction(this.storeName, 'readonly');
+                    const req = tx.objectStore(this.storeName).get(`${type}:${account}`);
+                    req.onsuccess = () => {
+                        db.close();
+                        resolve(req.result || null);
+                    };
+                    req.onerror = () => {
+                        db.close();
+                        resolve(null);
+                    };
+                } catch (error) {
+                    db.close();
+                    resolve(null);
+                }
+            });
+        },
+        async clear(type, account) {
+            const db = await this.open().catch(() => null);
+            if (!db) return;
+            return new Promise(resolve => {
+                try {
+                    const tx = db.transaction(this.storeName, 'readwrite');
+                    tx.objectStore(this.storeName).delete(`${type}:${account}`);
+                    tx.oncomplete = () => {
+                        db.close();
+                        resolve();
+                    };
+                    tx.onerror = () => {
+                        db.close();
+                        resolve();
+                    };
+                } catch (error) {
+                    db.close();
+                    resolve();
+                }
+            });
+        },
+    };
+
+    function scheduleDraftSave(type, account) {
+        if (!draftStore.available() || !type || !account) return;
+        window.clearTimeout(draftSaveTimer);
+        draftSaveTimer = window.setTimeout(() => {
+            draftStore.save(type, account).catch(() => {});
+        }, 500);
     }
 
     function setupFloatingWidget() {
@@ -528,8 +785,10 @@
         if (!type) return;
         const account = getCurrentAccount();
         localStorage.removeItem(breakpointKey(type, account));
+        localStorage.removeItem(seenIdsKey(type, account));
+        draftStore.clear(type, account).catch(() => {});
         updateUIStatus();
-        logger.add('WARN', `已清空 ${type}/${account} 的断点`);
+        logger.add('WARN', `已清空 ${type}/${account} 的断点与本地暂存`);
         showMessage('已重置断点，下次将从头抓取。', '#ffd400');
     }
 
@@ -554,9 +813,9 @@
         const account = getCurrentAccount();
 
         if (config.mode === 'incremental') {
-            const lastSeenId = getBreakpoint(type, account);
-            if (lastSeenId && reachedBreakpoint(lastSeenId)) {
-                stopSync(`已到达上次断点 ${lastSeenId.slice(-6)}，增量同步完成`);
+            const stopReason = incrementalStopReason || shouldStopIncremental(type, account);
+            if (stopReason) {
+                stopSync(stopReason);
                 return;
             }
         }
@@ -607,7 +866,9 @@
         isScrolling = true;
         scrollCount = 0;
         stallCount = 0;
+        incrementalStopReason = null;
         currentFolderId = extractFolderId(window.location.href);
+        if (!currentFolderId) currentFolderName = null;
 
         const button = document.getElementById('x-archive-btn-sync');
         if (button) {
@@ -659,6 +920,13 @@
         if (type && currentTweets(type).length > 0) exportData();
     }
 
+    function formatLocalTimestamp(date = new Date()) {
+        const pad = value => String(value).padStart(2, '0');
+        const datePart = `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}`;
+        const timePart = `${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+        return `${datePart}-${timePart}`;
+    }
+
     function exportData() {
         const currentType = getPageType();
         const type = currentType || activeContext?.type;
@@ -670,7 +938,7 @@
         const collected = currentTweets(type);
         const tweets = collected
             .filter(tweet => /^\d+$/.test(String(tweet.id)))
-            .map(({ _types, ...tweet }) => tweet);
+            .map(({ _types, _isPrimary, ...tweet }) => tweet);
         const skipped = collected.length - tweets.length;
         if (skipped > 0) {
             logger.add('WARN', `跳过 ${skipped} 条无效记录（id 不是数字）`);
@@ -681,9 +949,15 @@
             return;
         }
 
-        const newest = tweets.reduce((a, b) => ((toBigInt(b.id) ?? 0n) > (toBigInt(a.id) ?? 0n) ? b : a));
+        const primaryTweets = collected.filter(
+            tweet => /^\d+$/.test(String(tweet.id)) && tweet._isPrimary !== false,
+        );
+        const anchorPool = primaryTweets.length > 0 ? primaryTweets : tweets;
+        const newest = anchorPool.reduce((a, b) => ((toBigInt(b.id) ?? 0n) > (toBigInt(a.id) ?? 0n) ? b : a));
         const oldest = tweets.reduce((a, b) => ((toBigInt(b.id) ?? 0n) < (toBigInt(a.id) ?? 0n) ? b : a));
         setBreakpoint(type, account, newest.id);
+        saveSeenIds(type, account, anchorPool.map(tweet => tweet.id));
+        draftStore.clear(type, account).catch(() => {});
         updateUIStatus();
 
         const payload = {
@@ -694,14 +968,11 @@
             oldest_id: oldest.id,
             total_tweets: tweets.length,
             folder_id: currentFolderId,
-            folder_name: null,
+            folder_name: currentFolderName || null,
             tweets,
         };
 
-        const now = new Date();
-        const datePart = now.toISOString().slice(0, 10).replace(/-/g, '');
-        const timePart = now.toTimeString().slice(0, 8).replace(/:/g, '');
-        const filename = `${type}s_${account}_${datePart}-${timePart}.json`;
+        const filename = `${type}s_${account}_${formatLocalTimestamp()}.json`;
 
         const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
@@ -717,6 +988,34 @@
         showMessage(`已导出 ${tweets.length} 条到 ${filename}`, '#00ba7c');
     }
 
+    async function restoreDraftOnBoot() {
+        const type = getPageType();
+        if (!type || !draftStore.available()) return;
+        const account = getCurrentAccount();
+        const draft = await draftStore.load(type, account).catch(() => null);
+        if (!draft || !Array.isArray(draft.tweets) || draft.tweets.length === 0) return;
+
+        let restored = 0;
+        for (const item of draft.tweets) {
+            if (!item || !item.id || !/^\d+$/.test(String(item.id))) continue;
+            const types = new Set(Array.isArray(item._types) && item._types.length ? item._types : [type]);
+            if (!tweetCollector.has(item.id)) {
+                tweetCollector.set(item.id, {
+                    ...item,
+                    _types: types,
+                    _isPrimary: item._isPrimary !== false,
+                });
+                restored++;
+            }
+        }
+        if (draft.folderId && !currentFolderId) currentFolderId = draft.folderId;
+        if (draft.folderName && !currentFolderName) currentFolderName = draft.folderName;
+        if (restored > 0) {
+            logger.add('INFO', `已从本地暂存恢复 ${restored} 条未导出推文`);
+            updateUIStatus();
+        }
+    }
+
     installHooks();
 
     // Exposed only when the test harness opts in; production pages never see this.
@@ -730,9 +1029,16 @@
             getCurrentAccount,
             endpointMatchesPage,
             extractFolderId,
+            extractFolderName,
             currentTweets,
             startSync,
             stopCapture,
+            formatLocalTimestamp,
+            shouldStopIncremental,
+            getSeenIds,
+            saveSeenIds,
+            draftStore,
+            restoreDraftOnBoot,
         };
     }
 
@@ -740,7 +1046,10 @@
     function ensureWidget() {
         setupFloatingWidget();
     }
-    window.addEventListener('DOMContentLoaded', ensureWidget);
+    window.addEventListener('DOMContentLoaded', () => {
+        ensureWidget();
+        restoreDraftOnBoot().catch(() => {});
+    });
     window.addEventListener('load', ensureWidget);
     const widgetTimer = window.setInterval(() => {
         ensureWidget();

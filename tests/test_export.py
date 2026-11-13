@@ -137,3 +137,26 @@ def test_export_limit_is_still_honoured(write_json, database):
     }
     import_json(database, write_json("five.json", payload), "alice", "bookmark")
     assert len(json.loads(export_data(database, fmt="json", limit=3))) == 3
+
+
+def test_export_paginates_list_tweets_beyond_single_page(write_json, database, monkeypatch):
+    import x_local_archive.export as export_module
+
+    payload = {
+        "account": "alice",
+        "type": "bookmark",
+        "tweets": [
+            {
+                "id": str(1400000000000000000 + index),
+                "text": f"tweet {index}",
+                "author_username": "alice",
+                "created_at": "2024-01-01T00:00:00Z",
+            }
+            for index in range(7)
+        ],
+    }
+    import_json(database, write_json("seven.json", payload), "alice", "bookmark")
+    monkeypatch.setattr(export_module, "_LIST_PAGE_SIZE", 3)
+
+    exported = json.loads(export_data(database, fmt="json"))
+    assert len(exported) == 7

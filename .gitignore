@@ -24,3 +24,4 @@ inbox/*
 !inbox/processed/.gitkeep
 !inbox/failed/
 !inbox/failed/.gitkeep
+.alma-snapshots

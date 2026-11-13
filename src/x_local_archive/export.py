@@ -4,6 +4,7 @@ import csv
 import html
 import io
 import json
+from collections.abc import Callable
 from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
@@ -12,6 +13,27 @@ from typing import Any
 from .db import _connect_read, _table_exists, list_tweets, search
 
 _FORMATS = {"json", "csv", "md", "html"}
+_SEARCH_PAGE_SIZE = 1000
+_LIST_PAGE_SIZE = 100000
+
+
+def _collect_rows(
+    fetch_page: Callable[[int, int], list[dict[str, Any]]],
+    *,
+    max_page_size: int,
+    limit: int | None,
+    offset: int,
+) -> list[dict[str, Any]]:
+    """Walk a paginated query until *limit* rows are gathered or results end."""
+    rows: list[dict[str, Any]] = []
+    while limit is None or len(rows) < limit:
+        remaining = limit - len(rows) if limit is not None else max_page_size
+        page_size = min(max_page_size, remaining)
+        page = fetch_page(page_size, offset + len(rows))
+        rows.extend(page)
+        if len(page) < page_size:
+            break
+    return rows
 
 
 def _chunks(values: list[str], size: int = 500) -> list[list[str]]:
@@ -228,24 +250,25 @@ def export_data(
     if query:
         # FTS-backed search validates 1..1000, so walk it in pages instead of
         # raising the cap and risking an unbounded single query.
-        rows = []
-        page_size = min(limit or 1000, 1000)
-        while limit is None or len(rows) < limit:
-            page = search(database, query, limit=page_size, offset=offset + len(rows), **filters)
-            rows.extend(page)
-            if len(page) < page_size:
-                break
-        if limit is not None:
-            rows = rows[:limit]
+        rows = _collect_rows(
+            lambda page_limit, page_offset: search(
+                database, query, limit=page_limit, offset=page_offset, **filters
+            ),
+            max_page_size=_SEARCH_PAGE_SIZE,
+            limit=limit,
+            offset=offset,
+        )
         for row in rows:
             row.pop("rank", None)
             row.pop("snippet", None)
     else:
-        rows = list_tweets(
-            database,
-            limit=limit if limit is not None else 100000,
+        rows = _collect_rows(
+            lambda page_limit, page_offset: list_tweets(
+                database, limit=page_limit, offset=page_offset, **filters
+            ),
+            max_page_size=_LIST_PAGE_SIZE,
+            limit=limit,
             offset=offset,
-            **filters,
         )
 
     ids = [str(row["id"]) for row in rows]

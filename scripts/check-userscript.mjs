@@ -439,4 +439,52 @@ assert.equal(
 assert.equal(api.extractFolderId("https://x.com/i/bookmarks/f1"), "f1");
 assert.equal(api.extractFolderId("https://x.com/i/bookmarks"), null);
 
+// --- local timestamp formatting -------------------------------------------
+const sampleDate = new Date(2026, 10, 13, 0, 5, 9);
+assert.equal(api.formatLocalTimestamp(sampleDate), "20261113-000509");
+
+// --- primary vs quoted tracking & incremental stop logic ------------------
+api.reset();
+const meta = { primaryIds: [] };
+api.extractTweetsFromData(bookmarkResponse, "bookmark", meta);
+assert.equal(api.collector.get("1700000000000000001")._isPrimary, true);
+assert.equal(api.collector.get("1600000000000000003")._isPrimary, false);
+assert.deepEqual(
+    meta.primaryIds.sort(),
+    ["1700000000000000001", "1782103537234973176", "1800000000000000002"],
+    "quoted-only tweet must not be listed in page primaryIds",
+);
+
+// Populate seenIds for alice/bookmark: an old newly-bookmarked tweet on a mixed page
+// must NOT prematurely stop incremental sync, while an all-known page MUST stop.
+sandbox.localStorage.removeItem("x_archive_seen_bookmark_alice");
+sandbox.localStorage.removeItem("x_archive_last_bookmark_alice");
+api.saveSeenIds("bookmark", "alice", ["1700000000000000001", "1800000000000000002"]);
+assert.equal(
+    api.shouldStopIncremental("bookmark", "alice", ["1100000000000000000", "1900000000000000000"]),
+    null,
+    "mixed page with an old tweet ID must not falsely stop incremental sync",
+);
+assert.ok(
+    api.shouldStopIncremental("bookmark", "alice", ["1700000000000000001", "1800000000000000002"]),
+    "all-known page must stop incremental sync",
+);
+
+// Legacy single-ID breakpoint fallback ignores quoted-only tweets.
+sandbox.localStorage.removeItem("x_archive_seen_bookmark_alice");
+sandbox.localStorage.setItem("x_archive_last_bookmark_alice", "1650000000000000000");
+assert.equal(
+    api.shouldStopIncremental("bookmark", "alice", []),
+    null,
+    "quoted-only tweet below legacy breakpoint must not stop incremental sync",
+);
+
+// --- folder name extraction -----------------------------------------------
+assert.equal(
+    api.extractFolderName({
+        data: { bookmark_collection_timeline: { name: "AI Papers" } },
+    }),
+    "AI Papers",
+);
+
 console.log("userscript behaviour checks passed");
